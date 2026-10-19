@@ -21,7 +21,7 @@ enum CallState: Int {
 }
 
 @MainActor
-final class CallManager: ObservableObject {
+final class CallManager: NSObject, ObservableObject {
 
     @Published var state: CallState = .idle
     @Published var showUI = false
@@ -386,7 +386,7 @@ final class CallManager: ObservableObject {
     private func startCapture(_ source: RTCVideoSource) {
         let cam = RTCCameraVideoCapturer(delegate: source)
         self.capturer = cam
-        let devices = cam.captureDevices()
+        let devices = RTCCameraVideoCapturer.captureDevices()
         let position: AVCaptureDevice.Position = usingFrontCamera ? .front : .back
         guard let device = devices.first(where: { $0.position == position }) ?? devices.first else {
             return
@@ -433,12 +433,16 @@ final class CallManager: ObservableObject {
 
 // MARK: - RTCPeerConnectionDelegate
 
-extension CallManager: RTCPeerConnectionDelegate {
+extension CallManager: @preconcurrency RTCPeerConnectionDelegate {
 
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {
+    // 协议要求但业务上不需要的方法，缺任意一个都会导致 "does not conform" 编译错误
+    nonisolated func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
     }
 
-    func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {
+    nonisolated func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {
+    }
+
+    nonisolated func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             if let track = stream.videoTracks.first {
@@ -447,13 +451,13 @@ extension CallManager: RTCPeerConnectionDelegate {
         }
     }
 
-    func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {
+    nonisolated func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {
     }
 
-    func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {
+    nonisolated func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {
     }
 
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
+    nonisolated func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             switch newState {
@@ -470,20 +474,20 @@ extension CallManager: RTCPeerConnectionDelegate {
         }
     }
 
-    func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
+    nonisolated func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
         DispatchQueue.main.async { [weak self] in
             self?.sendIceCandidate(candidate)
         }
     }
 
-    func peerConnection(_ peerConnection: RTCPeerConnection,
+    nonisolated func peerConnection(_ peerConnection: RTCPeerConnection,
                         didRemove candidates: [RTCIceCandidate]) {
     }
 
-    func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
+    nonisolated func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
     }
 
-    func peerConnection(_ peerConnection: RTCPeerConnection, didAdd rtpReceiver: RTCRtpReceiver,
+    nonisolated func peerConnection(_ peerConnection: RTCPeerConnection, didAdd rtpReceiver: RTCRtpReceiver,
                         streams: [RTCMediaStream]) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }

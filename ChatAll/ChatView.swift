@@ -35,8 +35,10 @@ struct ChatView: View {
         }
         .navigationBarTitle(title, displayMode: .inline)
         .toolbar {
-            if !isGroup {
-                ToolbarItem(placement: .navigationBarTrailing) {
+            // iOS 15 的 ToolbarContentBuilder 不支持 if（buildIf 需 iOS 16+），
+            // 条件判断必须放在 ToolbarItem 内部的 ViewBuilder 里。
+            ToolbarItem(placement: .navigationBarTrailing) {
+                if !isGroup {
                     HStack(spacing: 16) {
                         Button {
                             store.call.startCall(peerId: peerId, mode: "AUDIO")
@@ -106,7 +108,7 @@ struct ChatView: View {
                                    onTapImage: { url in previewURL = IdentifiableURL(url: url) },
                                    onTapFile: { m in downloadAndShare(m) },
                                    onTapVoice: { m in playVoice(m) },
-                                   isPlaying: recorder.playingURL == voiceURL(m))
+                                   isPlaying: recorder.playingURL == voiceURL(msg))
                         .id(msg.id)
                     }
                 }

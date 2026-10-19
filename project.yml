@@ -1,0 +1,70 @@
+name: ChatAll
+options:
+  bundleIdPrefix: com.chat
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+
+packages:
+  WebRTC:
+    url: https://github.com/stasel/WebRTC
+    from: "155.0.0"
+
+targets:
+  ChatAll:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: ChatAll
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.chat.chatall
+        PRODUCT_NAME: ChatAll
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+    dependencies:
+      - package: WebRTC
+        product: WebRTC
+    info:
+      path: ChatAll/Info.plist
+      properties:
+        CFBundleDisplayName: 聊天
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "1"
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UIRequiredDeviceCapabilities:
+          - armv7
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIApplicationSupportsIndirectInputEvents: true
+        # 权限说明（缺麦克风描述会直接崩溃）
+        NSCameraUsageDescription: 用于视频通话时采集画面
+        NSMicrophoneUsageDescription: 用于发送语音消息和语音通话
+        NSPhotoLibraryUsageDescription: 用于发送图片和设置头像
+        NSLocalNetworkUsageDescription: 用于连接聊天服务器
+        # 服务器是 http 明文，必须放开 ATS
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        # 点击 Bark 通知后跳回本 App
+        CFBundleURLTypes:
+          - CFBundleURLName: com.chat.chatall
+            CFBundleURLSchemes:
+              - chatall
+
+schemes:
+  ChatAll:
+    build:
+      targets:
+        ChatAll: all
+    run:
+      config: Debug
+    archive:
+      config: Release

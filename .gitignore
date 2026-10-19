@@ -1,0 +1,15 @@
+# XcodeGen 生成物，不入库
+ChatAll.xcodeproj/
+ChatAll/Info.plist
+
+# 构建产物
+build/
+DerivedData/
+*.ipa
+*.xcarchive
+
+# macOS / Xcode 杂项
+.DS_Store
+xcuserdata/
+*.xcuserdata/
+*.xcworkspace/xcuserdata/

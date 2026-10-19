@@ -1,0 +1,54 @@
+name: Build iOS IPA
+
+# 手动触发，或推送到主分支时自动构建
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+jobs:
+  build:
+    # 必须用 macOS 机器，Windows 无法编译 iOS
+    runs-on: macos-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 XcodeGen
+        run: brew install xcodegen
+
+      - name: 生成 Xcode 工程
+        run: xcodegen generate
+
+      - name: 查看 Xcode 版本
+        run: xcodebuild -version
+
+      - name: 编译并归档（不签名）
+        run: |
+          xcodebuild -project ChatAll.xcodeproj \
+            -scheme ChatAll \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/ChatAll.xcarchive" \
+            archive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_ALLOWANCE=NO
+
+      - name: 打包成未签名 ipa
+        run: |
+          APP="$RUNNER_TEMP/ChatAll.xcarchive/Products/Applications/ChatAll.app"
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/Payload/"
+          cd "$RUNNER_TEMP"
+          zip -qry ChatAll.ipa Payload
+          ls -lh ChatAll.ipa
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChatAll-ipa
+          path: ${{ runner.temp }}/ChatAll.ipa
+          if-no-files-found: error

@@ -117,12 +117,19 @@ struct ChatView: View {
                 .padding(.horizontal, 12)
             }
             .background(Color(.systemGroupedBackground))
+            .contentShape(Rectangle())
+            .onTapGesture { hideKeyboard() }
             .onChange(of: messages.count) { _ in
                 scrollToBottom(proxy)
             }
             .onReceive(NotificationCenter.default.publisher(
                 for: UIResponder.keyboardWillShowNotification)) { _ in
                 // 键盘弹出会压缩消息区，需重新滚到底部
+                scrollToBottom(proxy)
+            }
+            .onReceive(NotificationCenter.default.publisher(
+                for: UIResponder.keyboardDidShowNotification)) { _ in
+                // 键盘动画结束后再校准一次，避免偶发遮挡最后一条
                 scrollToBottom(proxy)
             }
             .onAppear {
@@ -143,7 +150,13 @@ struct ChatView: View {
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { doScroll() }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { doScroll() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { doScroll() }
+    }
+
+    /// 点击空白处收起键盘
+    private func hideKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                        to: nil, from: nil, for: nil)
     }
 
     private func senderName(_ msg: ChatMessage) -> String {
@@ -185,6 +198,8 @@ struct ChatView: View {
 
             TextField("输入消息", text: $inputText)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
+                .submitLabel(.send)
+                .onSubmit { sendText() }
 
             if inputText.trimmingCharacters(in: .whitespaces).isEmpty {
                 // 按住录音

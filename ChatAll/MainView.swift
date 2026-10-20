@@ -2,7 +2,7 @@
 //  MainView.swift
 //  ChatAll
 //
-//  底部三标签（好友 / 群组 / 新的朋友）+ 顶部个人资料行 + 右上角"+"菜单
+//  底部三标签（聊天 / 群组 / 我）+ 右上角铃铛（新的朋友）与"+"菜单
 //  + 好友 contextMenu（设置备注 / 删除好友）+ 未读红点角标 + 在线小绿点。
 //
 
@@ -14,17 +14,27 @@ struct MainView: View {
     @State private var tab = 0
     @State private var showSearch = false
     @State private var showCreateGroup = false
+    @State private var showPending = false
     @State private var remarkTarget: FriendItem? = nil
+
+    private var tabTitle: String {
+        switch tab {
+        case 0: return "聊天"
+        case 1: return "群组"
+        default: return "我"
+        }
+    }
 
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
-                profileBar
-                Divider()
                 content
             }
-            .navigationBarTitle("聊天", displayMode: .inline)
+            .navigationBarTitle(tabTitle, displayMode: .inline)
             .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    pendingButton
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     plusMenu
                 }
@@ -35,6 +45,7 @@ struct MainView: View {
         .navigationViewStyle(StackNavigationViewStyle())
         .sheet(isPresented: $showSearch) { SearchUserSheet() }
         .sheet(isPresented: $showCreateGroup) { CreateGroupSheet() }
+        .sheet(isPresented: $showPending) { PendingRequestsSheet() }
         .sheet(item: $remarkTarget) { friend in
             RemarkSheet(friend: friend)
         }
@@ -61,35 +72,26 @@ struct MainView: View {
         }
     }
 
-    // MARK: - 顶部个人资料行
+    // MARK: - 右上角铃铛（新的朋友）
 
-    private var profileBar: some View {
-        NavigationLink(destination: ProfileView()) {
-            HStack(spacing: 12) {
-                AvatarView(name: store.currentUser?.displayName ?? "我",
-                           avatar: store.currentUser?.avatar ?? "",
-                           size: 44)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(store.currentUser?.displayName ?? "我")
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundColor(.primary)
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(store.connected ? Color.chatGreen : Color.gray)
-                            .frame(width: 7, height: 7)
-                        Text(store.connected ? "已连接" : "连接中…")
-                            .font(.system(size: 12))
-                            .foregroundColor(.gray)
+    private var pendingButton: some View {
+        Button {
+            showPending = true
+        } label: {
+            Image(systemName: "bell")
+                .font(.system(size: 17, weight: .medium))
+                .overlay(alignment: .topTrailing) {
+                    if store.totalPendingCount > 0 {
+                        Text("\(min(store.totalPendingCount, 99))")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 3)
+                            .frame(minWidth: 14, minHeight: 14)
+                            .background(Color.red)
+                            .clipShape(Capsule())
+                            .offset(x: 9, y: -7)
                     }
                 }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 14))
-                    .foregroundColor(.gray)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
     }
@@ -121,7 +123,7 @@ struct MainView: View {
         switch tab {
         case 0: friendList
         case 1: groupList
-        default: pendingList
+        default: ProfileView().padding(.bottom, 56)
         }
     }
 
@@ -196,43 +198,6 @@ struct MainView: View {
         .padding(.bottom, 56)
     }
 
-    private var pendingList: some View {
-        List {
-            if store.pendingRequests.isEmpty {
-                Text("暂无新的好友申请")
-                    .foregroundColor(.gray)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, 40)
-            }
-            ForEach(store.pendingRequests) { req in
-                HStack(spacing: 12) {
-                    AvatarView(name: req.displayName, avatar: "", size: 44)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(req.displayName)
-                            .font(.system(size: 16))
-                        Text(req.msg.isEmpty ? "请求添加你为好友" : req.msg)
-                            .font(.system(size: 13))
-                            .foregroundColor(.gray)
-                            .lineLimit(1)
-                    }
-                    Spacer()
-                    Button("接受") {
-                        Task { await store.handleRequest(req, accept: true) }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Color.chatGreen)
-                    Button("拒绝") {
-                        Task { await store.handleRequest(req, accept: false) }
-                    }
-                    .buttonStyle(.bordered)
-                }
-                .padding(.vertical, 4)
-            }
-        }
-        .listStyle(PlainListStyle())
-        .padding(.bottom, 56)
-    }
-
     private func badge(_ count: Int) -> some View {
         Text(count > 99 ? "99+" : "\(count)")
             .font(.system(size: 11, weight: .medium))
@@ -247,9 +212,9 @@ struct MainView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 0) {
-            tabButton(index: 0, title: "好友", icon: "person.2", badgeCount: totalFriendUnread)
+            tabButton(index: 0, title: "聊天", icon: "message", badgeCount: totalFriendUnread)
             tabButton(index: 1, title: "群组", icon: "person.3", badgeCount: totalGroupUnread)
-            tabButton(index: 2, title: "新的朋友", icon: "bell", badgeCount: store.totalPendingCount)
+            tabButton(index: 2, title: "我", icon: "person", badgeCount: 0)
         }
         .padding(.top, 6)
         .padding(.bottom, 2)
@@ -310,6 +275,58 @@ struct MainView: View {
                 .padding(.top, 8)
                 .transition(.opacity)
         }
+    }
+}
+
+// MARK: - 新的朋友
+
+struct PendingRequestsSheet: View {
+    @EnvironmentObject var store: AppStore
+    @Environment(\.presentationMode) var presentationMode
+
+    var body: some View {
+        NavigationView {
+            List {
+                if store.pendingRequests.isEmpty {
+                    Text("暂无新的好友申请")
+                        .foregroundColor(.gray)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.top, 40)
+                }
+                ForEach(store.pendingRequests) { req in
+                    HStack(spacing: 12) {
+                        AvatarView(name: req.displayName, avatar: "", size: 44)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(req.displayName)
+                                .font(.system(size: 16))
+                            Text(req.msg.isEmpty ? "请求添加你为好友" : req.msg)
+                                .font(.system(size: 13))
+                                .foregroundColor(.gray)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        Button("接受") {
+                            Task { await store.handleRequest(req, accept: true) }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Color.chatGreen)
+                        Button("拒绝") {
+                            Task { await store.handleRequest(req, accept: false) }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            .listStyle(PlainListStyle())
+            .navigationBarTitle("新的朋友", displayMode: .inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("关闭") { presentationMode.wrappedValue.dismiss() }
+                }
+            }
+        }
+        .navigationViewStyle(StackNavigationViewStyle())
     }
 }
 

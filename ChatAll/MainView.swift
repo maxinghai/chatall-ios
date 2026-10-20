@@ -38,16 +38,17 @@ struct MainView: View {
         .sheet(item: $remarkTarget) { friend in
             RemarkSheet(friend: friend)
         }
-        .fullScreenCover(isPresented: Binding(
-            get: { store.call.showUI },
-            set: { newValue in if !newValue { store.call.hangup() } }
-        )) {
+        .fullScreenCover(isPresented: $store.callUIVisible, onDismiss: {
+            // 兜底：若界面被系统关闭而通话未结束，确保挂断清理
+            if store.call.state != .idle { store.call.hangup() }
+        }) {
             CallView(call: store.call)
         }
         .onChange(of: store.toastMessage) { value in
             guard value != nil else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                store.toastMessage = nil
+                // 只清除自己弹出的那条，避免旧定时器清掉新 toast
+                if store.toastMessage == value { store.toastMessage = nil }
             }
         }
         .alert(isPresented: Binding(

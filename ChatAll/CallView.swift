@@ -145,9 +145,10 @@ struct CallView: View {
                             call.switchCamera()
                         }
                     } else {
-                        controlButton(icon: "speaker.wave.2.fill",
-                                      title: "扬声器",
+                        controlButton(icon: call.speakerOn ? "speaker.wave.2.fill" : "speaker.fill",
+                                      title: call.speakerOn ? "扬声器" : "听筒",
                                       background: Color.white.opacity(0.2)) {
+                            call.toggleSpeaker()
                         }
                     }
                 }

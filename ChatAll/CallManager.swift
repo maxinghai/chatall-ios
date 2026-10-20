@@ -24,11 +24,19 @@ enum CallState: Int {
 final class CallManager: NSObject, ObservableObject {
 
     @Published var state: CallState = .idle
-    @Published var showUI = false
+    @Published var showUI = false {
+        didSet {
+            if oldValue != showUI { onShowUIChange?(showUI) }
+        }
+    }
+    /// showUI 变化回调（AppStore 用它镜像到 callUIVisible 供视图订阅）
+    var onShowUIChange: ((Bool) -> Void)?
     @Published var peerName = ""
     @Published var isVideo = false
     @Published var statusText = ""
     @Published var muted = false
+    /// 扬声器开关（音频通话用）
+    @Published var speakerOn = true
     @Published var remoteTrack: RTCVideoTrack? = nil
     @Published var localTrack: RTCVideoTrack? = nil
 
@@ -104,6 +112,12 @@ final class CallManager: NSObject, ObservableObject {
     func toggleMute() {
         muted.toggle()
         localAudioTrack?.isEnabled = !muted
+    }
+
+    /// 扬声器 / 听筒切换
+    func toggleSpeaker() {
+        speakerOn.toggle()
+        configureAudioSession()
     }
 
     /// 前后摄像头切换
@@ -286,6 +300,7 @@ final class CallManager: NSObject, ObservableObject {
         statusText = ""
         isVideo = false
         muted = false
+        speakerOn = true
         isCaller = false
         isAccepted = false
         callId = ""
@@ -401,7 +416,11 @@ final class CallManager: NSObject, ObservableObject {
         let session = RTCAudioSession.sharedInstance()
         session.lockForConfiguration()
         do {
-            try session.setCategory(.playAndRecord, with: [.defaultToSpeaker, .allowBluetooth])
+            if speakerOn {
+                try session.setCategory(.playAndRecord, with: [.defaultToSpeaker, .allowBluetooth])
+            } else {
+                try session.setCategory(.playAndRecord, with: [.allowBluetooth])
+            }
         } catch { }
         try? session.setActive(true)
         session.unlockForConfiguration()

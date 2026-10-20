@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import UIKit
 import AVFoundation
 import PhotosUI
 import UniformTypeIdentifiers
@@ -64,8 +65,8 @@ struct ChatView: View {
             recorder.stopPlay()
         }
         .sheet(isPresented: $showPhotoPicker) {
-            PhotoPicker { image in
-                sendImage(image)
+            PhotoPicker { images in
+                sendImages(images)
             }
         }
         .fileImporter(isPresented: $showFileImporter,
@@ -153,18 +154,25 @@ struct ChatView: View {
             Button {
                 showPhotoPicker = true
             } label: {
-                Image(systemName: "photo")
-                    .font(.system(size: 20))
-                    .foregroundColor(.gray)
+                if sending {
+                    ProgressView()
+                        .frame(width: 20, height: 20)
+                } else {
+                    Image(systemName: "photo")
+                        .font(.system(size: 20))
+                        .foregroundColor(.gray)
+                }
             }
+            .disabled(sending)
 
             Button {
                 showFileImporter = true
             } label: {
                 Image(systemName: "paperclip")
                     .font(.system(size: 20))
-                    .foregroundColor(.gray)
+                    .foregroundColor(sending ? Color.gray.opacity(0.4) : .gray)
             }
+            .disabled(sending)
 
             TextField("输入消息", text: $inputText)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
@@ -223,21 +231,41 @@ struct ChatView: View {
         inputText = ""
     }
 
-    private func sendImage(_ image: UIImage) {
+    private func sendImages(_ images: [UIImage]) {
+        guard !images.isEmpty else { return }
         sending = true
-        guard let data = image.jpegData(compressionQuality: 0.7) else {
-            sending = false
-            return
-        }
-        let name = "img_\(Int(Date().timeIntervalSince1970)).jpg"
         Task { @MainActor in
-            if let res = await store.upload(data: data, fileName: name, mimeType: "image/jpeg") {
-                store.sendMessage(to: peerId, isGroup: isGroup,
-                                  contentType: "IMAGE", content: "[图片]",
-                                  fileUrl: res.url, fileName: res.name, fileSize: res.size)
+            store.toastMessage = "正在发送图片…"
+            var sent = 0
+            for image in images {
+                guard let data = Self.processedJPEG(image) else { continue }
+                let name = "img_\(Int(Date().timeIntervalSince1970 * 1000))_\(Int.random(in: 100...999)).jpg"
+                if let res = await store.upload(data: data, fileName: name, mimeType: "image/jpeg") {
+                    store.sendMessage(to: peerId, isGroup: isGroup,
+                                      contentType: "IMAGE", content: "[图片]",
+                                      fileUrl: res.url, fileName: res.name, fileSize: res.size)
+                    sent += 1
+                }
             }
+            store.toastMessage = sent > 1 ? "已发送 \(sent) 张图片" : nil
             sending = false
         }
+    }
+
+    /// 大图等比压缩到最长边 1600，控制上传体积、加快发送
+    private static func processedJPEG(_ image: UIImage) -> Data? {
+        let maxSide: CGFloat = 1600
+        var target = image
+        let side = max(image.size.width, image.size.height) * image.scale
+        if side > maxSide {
+            let ratio = maxSide / side
+            let newSize = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)
+            let format = UIGraphicsImageRendererFormat.default()
+            format.scale = 1
+            let renderer = UIGraphicsImageRenderer(size: newSize, format: format)
+            target = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: newSize)) }
+        }
+        return target.jpegData(compressionQuality: 0.7)
     }
 
     private func handleFileImport(_ result: Result<[URL], Error>) {
@@ -529,14 +557,15 @@ struct ShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
-/// 相册选图（PHPicker）
+/// 相册选图（PHPicker，无需相册权限，支持最多 6 张多选）
 struct PhotoPicker: UIViewControllerRepresentable {
-    var onPick: (UIImage) -> Void
+    var maxCount: Int = 6
+    var onPick: ([UIImage]) -> Void
 
     func makeUIViewController(context: Context) -> PHPickerViewController {
         var config = PHPickerConfiguration()
         config.filter = .images
-        config.selectionLimit = 1
+        config.selectionLimit = maxCount
         let vc = PHPickerViewController(configuration: config)
         vc.delegate = context.coordinator
         return vc
@@ -554,14 +583,23 @@ struct PhotoPicker: UIViewControllerRepresentable {
 
         func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
             picker.dismiss(animated: true)
-            guard let provider = results.first?.itemProvider,
-                  provider.canLoadObject(ofClass: UIImage.self) else { return }
-            provider.loadObject(ofClass: UIImage.self) { object, _ in
-                if let image = object as? UIImage {
-                    DispatchQueue.main.async {
-                        self.parent.onPick(image)
-                    }
+            let providers = results.compactMap { $0.itemProvider }
+                .filter { $0.canLoadObject(ofClass: UIImage.self) }
+            guard !providers.isEmpty else { return }
+
+            var images = [UIImage?](repeating: nil, count: providers.count)
+            let group = DispatchGroup()
+            for (index, provider) in providers.enumerated() {
+                group.enter()
+                provider.loadObject(ofClass: UIImage.self) { object, _ in
+                    images[index] = object as? UIImage
+                    group.leave()
                 }
+            }
+            group.notify(queue: .main) { [weak self] in
+                guard let self = self else { return }
+                let picked = images.compactMap { $0 }
+                if !picked.isEmpty { self.parent.onPick(picked) }
             }
         }
     }

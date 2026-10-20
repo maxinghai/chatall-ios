@@ -18,6 +18,8 @@ final class AppStore: ObservableObject {
 
     // MARK: - 连接状态
     @Published var connected: Bool = false
+    /// 通话界面显隐（镜像 CallManager.showUI，让 MainView 能可靠订阅）
+    @Published var callUIVisible: Bool = false
 
     // MARK: - 列表数据
     @Published var friends: [FriendItem] = []
@@ -41,6 +43,8 @@ final class AppStore: ObservableObject {
     let call: CallManager
     /// 本地消息占位 id 种子（负数递减）
     private var localIdSeed: Int64 = -1
+    /// 是否成功连上过（区分首次连接与断线重连）
+    private var everConnected = false
 
     init() {
         self.call = CallManager()
@@ -58,9 +62,21 @@ final class AppStore: ObservableObject {
             guard let self = self else { return }
             Task { @MainActor in
                 self.connected = value
+                if value && self.isLoggedIn {
+                    if self.everConnected {
+                        // 断线重连成功：补拉列表与离线消息
+                        Task { await self.reloadAll() }
+                    }
+                    self.everConnected = true
+                }
             }
         }
         call.store = self
+        call.onShowUIChange = { [weak self] visible in
+            Task { @MainActor in
+                self?.callUIVisible = visible
+            }
+        }
     }
 
     // MARK: - 登录 / 注册
@@ -195,8 +211,15 @@ final class AppStore: ObservableObject {
         if activePeerId == peerId { activePeerId = nil }
     }
 
+    /// 会话 key：群聊用群 id；单聊用对方 id（自己发的取收件人，收到的取发件人）
+    private func conversationKey(for msg: ChatMessage) -> Int64 {
+        if msg.chatType == 2 { return msg.groupId ?? 0 }
+        if msg.fromId == currentUser?.id { return msg.toId ?? 0 }
+        return msg.fromId
+    }
+
     private func appendIncoming(_ msg: ChatMessage) {
-        let key = msg.peerKey
+        let key = conversationKey(for: msg)
         var list = messagesByPeer[key] ?? []
         // 用 msgId 去重
         if list.contains(where: { $0.msgId == msg.msgId && !$0.msgId.isEmpty }) { return }
@@ -297,7 +320,7 @@ final class AppStore: ObservableObject {
     private func handlePacket(type: String, data: [String: Any]?) {
         switch type {
         case "PONG":
-            break
+            ws.notePong()
         case "ACK":
             if let data = data, let msg = decodeMessage(data) {
                 handleAck(msg)
@@ -325,13 +348,7 @@ final class AppStore: ObservableObject {
     }
 
     private func handleAck(_ msg: ChatMessage) {
-        let key: Int64
-        if msg.chatType == 2 {
-            key = msg.groupId ?? 0
-        } else {
-            // ACK 回给自己，会话 key 是对方 id
-            key = (msg.fromId == currentUser?.id) ? (msg.toId ?? 0) : msg.fromId
-        }
+        let key = conversationKey(for: msg)
         var list = messagesByPeer[key] ?? []
         if let idx = list.firstIndex(where: { $0.msgId == msg.msgId }) {
             list[idx].localState = 1

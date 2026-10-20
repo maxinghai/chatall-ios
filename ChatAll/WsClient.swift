@@ -265,6 +265,9 @@ extension WsClient: URLSessionWebSocketDelegate {
             self.openTimeoutItem?.cancel()
             self.openTimeoutItem = nil
             self.setConnected(true)
+            // 连接成功后启动收帧循环与心跳（09e4427 重构时遗漏，导致收不到消息）
+            self.startPing()
+            self.receiveLoop()
         }
     }
 

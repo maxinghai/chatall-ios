@@ -148,8 +148,11 @@ struct ProfileView: View {
         }
         .navigationBarTitle("个人资料", displayMode: .inline)
         .sheet(isPresented: $showPhoto) {
-            PhotoPicker { image in
-                uploadAvatar(image)
+            PhotoPicker { images in
+                // 头像只需一张，取第一张
+                if let image = images.first {
+                    uploadAvatar(image)
+                }
             }
         }
         .onAppear {

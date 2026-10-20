@@ -120,6 +120,11 @@ struct ChatView: View {
             .onChange(of: messages.count) { _ in
                 scrollToBottom(proxy)
             }
+            .onReceive(NotificationCenter.default.publisher(
+                for: UIResponder.keyboardWillShowNotification)) { _ in
+                // 键盘弹出会压缩消息区，需重新滚到底部
+                scrollToBottom(proxy)
+            }
             .onAppear {
                 scrollToBottom(proxy, animated: false)
             }
@@ -128,13 +133,17 @@ struct ChatView: View {
 
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
         guard let last = messages.last else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+        // LazyVStack 懒加载会让内容高度在滚动后继续变化，
+        // 需延迟滚动两次才能稳定停在最底部，否则最后一条会被输入栏遮住一截
+        func doScroll() {
             if animated {
                 withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
             } else {
                 proxy.scrollTo(last.id, anchor: .bottom)
             }
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { doScroll() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { doScroll() }
     }
 
     private func senderName(_ msg: ChatMessage) -> String {

@@ -456,21 +456,16 @@ struct MessageRow: View {
     private var imageBubble: some View {
         ZStack {
             if let url = AppConfig.fileURL(message.fileUrl) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let img):
-                        img.resizable().scaledToFill()
-                    case .empty:
-                        ProgressView().frame(width: 160, height: 160)
-                    case .failure:
-                        Image(systemName: "photo")
-                            .font(.system(size: 30))
-                            .foregroundColor(.gray)
-                            .frame(width: 160, height: 160)
-                    @unknown default:
-                        Color.gray.opacity(0.2).frame(width: 160, height: 160)
-                    }
-                }
+                CachedImage(url: url,
+                            placeholder: {
+                                ProgressView().frame(width: 160, height: 160)
+                            },
+                            failure: {
+                                Image(systemName: "photo")
+                                    .font(.system(size: 30))
+                                    .foregroundColor(.gray)
+                                    .frame(width: 160, height: 160)
+                            })
             } else {
                 Color.gray.opacity(0.2).frame(width: 160, height: 160)
             }

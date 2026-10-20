@@ -43,6 +43,8 @@ final class AppStore: ObservableObject {
     let call: CallManager
     /// 本地消息占位 id 种子（负数递减）
     private var localIdSeed: Int64 = -1
+    /// 已完成历史加载的会话（含空会话），再次进入不重复请求网络，新消息由 WS 实时推送
+    private var historyLoadedPeers: Set<Int64> = []
     /// 是否成功连上过（区分首次连接与断线重连）
     private var everConnected = false
 
@@ -124,6 +126,7 @@ final class AppStore: ObservableObject {
         messagesByPeer = [:]
         unreadCounts = [:]
         activePeerId = nil
+        historyLoadedPeers.removeAll()
     }
 
     func connectWS() {
@@ -188,6 +191,8 @@ final class AppStore: ObservableObject {
     func openConversation(peerId: Int64, isGroup: Bool) async {
         activePeerId = peerId
         unreadCounts[peerId] = 0
+        // 历史只加载一次：已有缓存直接用，避免每次进入都重新请求
+        guard !historyLoadedPeers.contains(peerId) else { return }
         do {
             let list: [ChatMessage]
             if isGroup {
@@ -202,6 +207,7 @@ final class AppStore: ObservableObject {
                 merged.append(p)
             }
             messagesByPeer[peerId] = merged
+            historyLoadedPeers.insert(peerId)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -406,6 +412,7 @@ final class AppStore: ObservableObject {
             friends.removeAll(where: { $0.id == friendId })
             messagesByPeer[friendId] = nil
             unreadCounts[friendId] = nil
+            historyLoadedPeers.remove(friendId)
         } catch { errorMessage = error.localizedDescription }
     }
 

@@ -21,6 +21,7 @@ struct ProfileView: View {
     @State private var saving = false
     @State private var changingPwd = false
     @State private var savingBark = false
+    @State private var cacheSizeText = ""
 
     var body: some View {
         Form {
@@ -109,6 +110,28 @@ struct ProfileView: View {
                 .disabled(savingBark)
             }
 
+            // MARK: 缓存
+            Section(header: Text("缓存")) {
+                HStack {
+                    Text("图片缓存占用")
+                        .font(.system(size: 14))
+                        .foregroundColor(.gray)
+                    Spacer()
+                    Text(cacheSizeText.isEmpty ? "计算中…" : cacheSizeText)
+                        .font(.system(size: 14))
+                        .foregroundColor(.gray)
+                }
+                Button {
+                    clearCache()
+                } label: {
+                    HStack {
+                        Spacer()
+                        Text("清除缓存").foregroundColor(.chatGreen)
+                        Spacer()
+                    }
+                }
+            }
+
             // MARK: 退出登录
             Section {
                 Button("退出登录") {
@@ -132,12 +155,26 @@ struct ProfileView: View {
         .onAppear {
             nickname = store.currentUser?.nickname ?? ""
             avatar = store.currentUser?.avatar ?? ""
+            refreshCacheSize()
             Task { @MainActor in
                 let saved = await store.loadBark()
                 barkSaved = saved
                 if barkKey.isEmpty { barkKey = saved }
             }
         }
+    }
+
+    // MARK: - 缓存
+
+    private func refreshCacheSize() {
+        let bytes = ImageCache.diskUsage()
+        cacheSizeText = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    private func clearCache() {
+        ImageCache.clear()
+        refreshCacheSize()
+        store.toastMessage = "缓存已清除"
     }
 
     // MARK: - 动作

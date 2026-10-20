@@ -15,18 +15,9 @@ struct AvatarView: View {
     var body: some View {
         ZStack {
             if !avatar.isEmpty, let url = AppConfig.fileURL(avatar) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFill()
-                    case .empty:
-                        loadingPlaceholder
-                    case .failure:
-                        textPlaceholder
-                    @unknown default:
-                        textPlaceholder
-                    }
-                }
+                CachedImage(url: url,
+                            placeholder: { loadingPlaceholder },
+                            failure: { textPlaceholder })
             } else {
                 textPlaceholder
             }

@@ -211,6 +211,7 @@ struct ChatView: View {
                            isFocused: $inputFocused,
                            onSend: sendText)
                 .frame(maxWidth: .infinity)
+                .frame(height: 34)
 
             if inputText.trimmingCharacters(in: .whitespaces).isEmpty {
                 // 按住录音
@@ -445,6 +446,9 @@ private struct ChatInputField: UIViewRepresentable {
         field.text = text
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // 垂直方向固定按内容高度，避免 SwiftUI 把输入框拉满剩余空间
+        field.setContentHuggingPriority(.required, for: .vertical)
+        field.setContentCompressionResistancePriority(.required, for: .vertical)
         field.addTarget(context.coordinator,
                         action: #selector(Coordinator.textChanged(_:)),
                         for: .editingChanged)

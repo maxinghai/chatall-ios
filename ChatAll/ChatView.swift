@@ -27,6 +27,7 @@ struct ChatView: View {
     @State private var shareItem: ShareItem? = nil
     @State private var sending = false
     @StateObject private var recorder = VoiceRecorder()
+    @FocusState private var inputFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -113,12 +114,13 @@ struct ChatView: View {
                         .id(msg.id)
                     }
                 }
-                .padding(.vertical, 12)
+                .padding(.top, 12)
+                .padding(.bottom, 28)
                 .padding(.horizontal, 12)
             }
             .background(Color(.systemGroupedBackground))
             .contentShape(Rectangle())
-            .onTapGesture { hideKeyboard() }
+            .onTapGesture { inputFocused = false }
             .onChange(of: messages.count) { _ in
                 scrollToBottom(proxy)
             }
@@ -151,12 +153,6 @@ struct ChatView: View {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { doScroll() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { doScroll() }
-    }
-
-    /// 点击空白处收起键盘
-    private func hideKeyboard() {
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
-                                        to: nil, from: nil, for: nil)
     }
 
     private func senderName(_ msg: ChatMessage) -> String {
@@ -198,6 +194,7 @@ struct ChatView: View {
 
             TextField("输入消息", text: $inputText)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
+                .focused($inputFocused)
                 .submitLabel(.send)
                 .onSubmit { sendText() }
 
@@ -253,6 +250,10 @@ struct ChatView: View {
         store.sendMessage(to: peerId, isGroup: isGroup,
                           contentType: "TEXT", content: text)
         inputText = ""
+        // 发送后保持键盘弹出：列表刷新可能让输入框失焦，稍后重新拉起焦点
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            inputFocused = true
+        }
     }
 
     private func sendImages(_ images: [UIImage]) {

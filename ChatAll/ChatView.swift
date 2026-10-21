@@ -97,6 +97,10 @@ struct ChatView: View {
         store.messages(for: peerId)
     }
 
+    /// 列表底部固定锚点：消息行的 id 会在服务端 ACK 后变化（本地负数 → 真实 id），
+    /// 用它滚动会因目标瞬时消失而失效，故始终滚到这个不变的空视图。
+    private let bottomAnchor = "chat_bottom_anchor"
+
     private var messageArea: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -113,15 +117,22 @@ struct ChatView: View {
                                    isPlaying: recorder.playingURL == voiceURL(msg))
                         .id(msg.id)
                     }
+                    Color.clear
+                        .frame(height: 16)
+                        .id(bottomAnchor)
                 }
                 .padding(.top, 12)
-                .padding(.bottom, 28)
+                .padding(.bottom, 12)
                 .padding(.horizontal, 12)
             }
             .background(Color(.systemGroupedBackground))
             .contentShape(Rectangle())
             .onTapGesture { inputFocused = false }
             .onChange(of: messages.count) { _ in
+                scrollToBottom(proxy)
+            }
+            .onChange(of: messages.last?.id) { _ in
+                // 服务端 ACK 会替换最后一条消息的 id，行重建后需重新贴底
                 scrollToBottom(proxy)
             }
             .onReceive(NotificationCenter.default.publisher(
@@ -141,17 +152,20 @@ struct ChatView: View {
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
-        guard let last = messages.last else { return }
-        // LazyVStack 懒加载会让内容高度在滚动后继续变化，
-        // 需延迟滚动两次才能稳定停在最底部，否则最后一条会被输入栏遮住一截
+        guard !messages.isEmpty else { return }
+        // 滚到固定锚点：LazyVStack 懒加载与 ACK 换 id 都不会让目标丢失。
+        // 分三次执行，覆盖键盘压缩、行布局与行高变化的时序。
         func doScroll() {
             if animated {
-                withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(bottomAnchor, anchor: .bottom)
+                }
             } else {
-                proxy.scrollTo(last.id, anchor: .bottom)
+                proxy.scrollTo(bottomAnchor, anchor: .bottom)
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { doScroll() }
+        DispatchQueue.main.async { doScroll() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { doScroll() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { doScroll() }
     }
 

@@ -139,7 +139,7 @@ struct ZoomableImageView: View {
                     GeometryReader { imgGeo in
                         Color.clear
                             .onAppear { imageSize = imgGeo.size }
-                            .onChange(of: imgGeo.size) { _, new in imageSize = new }
+                            .onChange(of: imgGeo.size) { new in imageSize = new }
                     }
                 )
                 .frame(width: geo.size.width, height: geo.size.height)

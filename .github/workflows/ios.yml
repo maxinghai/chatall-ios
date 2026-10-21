@@ -37,6 +37,15 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_ALLOWANCE=NO
 
+      - name: 校验 Widget 扩展已嵌入
+        run: |
+          APP="$RUNNER_TEMP/ChatAll.xcarchive/Products/Applications/ChatAll.app"
+          if [ ! -d "$APP/PlugIns/ChatAllWidget.appex" ]; then
+            echo "::error::缺少 ChatAllWidget.appex，灵动岛实时活动不会生效"
+            exit 1
+          fi
+          echo "已嵌入：$(ls "$APP/PlugIns")"
+
       - name: 打包成未签名 ipa
         run: |
           APP="$RUNNER_TEMP/ChatAll.xcarchive/Products/Applications/ChatAll.app"

@@ -23,7 +23,7 @@ struct ChatView: View {
     @State private var inputText = ""
     @State private var showPhotoPicker = false
     @State private var showFileImporter = false
-    @State private var previewURL: IdentifiableURL? = nil
+    @State private var previewItem: PreviewItem? = nil
     @State private var shareItem: ShareItem? = nil
     @State private var sending = false
     @StateObject private var recorder = VoiceRecorder()
@@ -75,8 +75,8 @@ struct ChatView: View {
                       allowsMultipleSelection: false) { result in
             handleFileImport(result)
         }
-        .fullScreenCover(item: $previewURL) { item in
-            ImagePreviewView(url: item.url)
+        .fullScreenCover(item: $previewItem) { item in
+            ImagePreviewView(urls: item.urls, currentIndex: item.index)
         }
         .sheet(item: $shareItem) { item in
             ShareSheet(url: item.url)
@@ -111,7 +111,7 @@ struct ChatView: View {
                                    showSender: isGroup,
                                    senderName: senderName(msg),
                                    senderAvatar: senderAvatar(msg),
-                                   onTapImage: { url in previewURL = IdentifiableURL(url: url) },
+                                   onTapImage: { url in openImagePreview(url: url) },
                                    onTapFile: { m in downloadAndShare(m) },
                                    onTapVoice: { m in playVoice(m) },
                                    isPlaying: recorder.playingURL == voiceURL(msg))
@@ -411,6 +411,19 @@ struct ChatView: View {
             }
         }.resume()
     }
+
+    /// 收集当前会话所有图片 URL，打开预览并定位到当前点击的图片
+    private func openImagePreview(url: URL) {
+        let imageURLs = messages.compactMap { msg -> URL? in
+            guard msg.contentType == "IMAGE" else { return nil }
+            return AppConfig.fileURL(msg.fileUrl)
+        }
+        if let idx = imageURLs.firstIndex(of: url) {
+            previewItem = PreviewItem(urls: imageURLs, index: idx)
+        } else {
+            previewItem = PreviewItem(urls: [url], index: 0)
+        }
+    }
 }
 
 // MARK: - 单条消息气泡
@@ -568,10 +581,11 @@ struct MessageRow: View {
 
 // MARK: - 辅助类型
 
-/// 带 id 的 URL（用于 sheet / fullScreenCover）
-struct IdentifiableURL: Identifiable {
+/// 图片预览项：所有图片 URL + 当前索引
+struct PreviewItem: Identifiable {
     let id = UUID()
-    let url: URL
+    let urls: [URL]
+    let index: Int
 }
 
 /// 分享项

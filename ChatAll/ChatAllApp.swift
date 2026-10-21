@@ -31,6 +31,21 @@ struct ChatAllApp: App {
     /// 处理自定义 scheme 回调
     private func handleURL(_ url: URL) {
         guard url.scheme == "chatall" else { return }
+        // 灵动岛 / 锁屏实时活动：打开通话页或挂断
+        switch url.host {
+        case "open-call":
+            Task { @MainActor in
+                store.call.restoreUI()
+            }
+            return
+        case "hangup":
+            Task { @MainActor in
+                store.call.hangup()
+            }
+            return
+        default:
+            break
+        }
         Task { @MainActor in
             await store.loadOffline()
             await store.refreshFriends()

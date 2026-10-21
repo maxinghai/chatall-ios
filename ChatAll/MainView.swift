@@ -50,10 +50,20 @@ struct MainView: View {
             RemarkSheet(friend: friend)
         }
         .fullScreenCover(isPresented: $store.callUIVisible, onDismiss: {
-            // 兜底：若界面被系统关闭而通话未结束，确保挂断清理
-            if store.call.state != .idle { store.call.hangup() }
+            // 下滑返回：来电中视为拒绝；通话中则收起为悬浮小窗/悬浮电话图标，不挂断
+            if store.call.state == .incoming {
+                store.call.hangup()
+            } else if store.call.state != .idle {
+                store.call.minimizeUI()
+            }
         }) {
             CallView(call: store.call)
+        }
+        .overlay {
+            // 收起后悬浮在页面上的通话小窗（视频）/电话图标（语音），点击恢复通话页
+            CallMiniOverlay(call: store.call) {
+                store.call.restoreUI()
+            }
         }
         .onChange(of: store.toastMessage) { value in
             guard value != nil else { return }

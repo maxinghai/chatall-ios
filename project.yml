@@ -2,7 +2,7 @@ name: ChatAll
 options:
   bundleIdPrefix: com.chat
   deploymentTarget:
-    iOS: "15.0"
+    iOS: "16.1"
   createIntermediateGroups: true
 
 settings:
@@ -20,7 +20,7 @@ targets:
   ChatAll:
     type: application
     platform: iOS
-    deploymentTarget: "15.0"
+    deploymentTarget: "16.1"
     sources:
       - path: ChatAll
     settings:
@@ -33,6 +33,7 @@ targets:
     dependencies:
       - package: WebRTC
         product: WebRTC
+      - target: ChatAllWidget
     info:
       path: ChatAll/Info.plist
       properties:
@@ -46,6 +47,11 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UIApplicationSupportsIndirectInputEvents: true
+        # 语音通话最小化/回到桌面后继续收音放音
+        UIBackgroundModes:
+          - audio
+        # 语音通话实时活动（灵动岛 / 锁屏）
+        NSSupportsLiveActivities: true
         # 权限说明（缺麦克风描述会直接崩溃）
         NSCameraUsageDescription: 用于视频通话时采集画面
         NSMicrophoneUsageDescription: 用于发送语音消息和语音通话
@@ -59,6 +65,27 @@ targets:
           - CFBundleURLName: com.chat.chatall
             CFBundleURLSchemes:
               - chatall
+
+  ChatAllWidget:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "16.1"
+    sources:
+      - path: ChatAllWidget
+      - path: ChatAll/CallActivityAttributes.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.chat.chatall.widget
+        PRODUCT_NAME: ChatAllWidget
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: "YES"
+    info:
+      path: ChatAllWidget/Info.plist
+      properties:
+        CFBundleDisplayName: 通话
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
 
 schemes:
   ChatAll:

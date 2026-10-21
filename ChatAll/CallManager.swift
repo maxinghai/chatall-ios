@@ -34,7 +34,11 @@ final class CallManager: NSObject, ObservableObject {
     var onShowUIChange: ((Bool) -> Void)?
     @Published var peerName = ""
     @Published var isVideo = false
-    @Published var statusText = ""
+    @Published var statusText = "" {
+        didSet {
+            if oldValue != statusText { syncLiveActivity() }
+        }
+    }
     @Published var muted = false
     /// 扬声器开关（音频通话用）
     @Published var speakerOn = true
@@ -109,10 +113,23 @@ final class CallManager: NSObject, ObservableObject {
         teardown()
     }
 
+    /// 收起通话页（不挂断）：视频转悬浮小窗，语音转悬浮电话图标
+    func minimizeUI() {
+        guard state == .active || state == .calling else { return }
+        if showUI { showUI = false }
+    }
+
+    /// 从悬浮小窗恢复通话页
+    func restoreUI() {
+        guard state != .idle else { return }
+        if !showUI { showUI = true }
+    }
+
     /// 静音切换
     func toggleMute() {
         muted.toggle()
         localAudioTrack?.isEnabled = !muted
+        syncLiveActivity()
     }
 
     /// 扬声器 / 听筒切换
@@ -161,6 +178,8 @@ final class CallManager: NSObject, ObservableObject {
         self.state = .active
         self.statusText = "已接通"
         sendSignal(action: "ACCEPT", payload: nil)
+        // 语音通话接通后进入灵动岛 / 锁屏实时活动
+        syncLiveActivity()
     }
 
     // MARK: - 信令处理
@@ -196,6 +215,8 @@ final class CallManager: NSObject, ObservableObject {
             isAccepted = true
             statusText = "已接通"
             state = .active
+            // 语音通话接通后进入灵动岛 / 锁屏实时活动
+            syncLiveActivity()
             // 主叫收到 ACCEPT 后创建 offer
             if isCaller { createOffer() }
 
@@ -308,6 +329,8 @@ final class CallManager: NSObject, ObservableObject {
     }
 
     private func teardown() {
+        // 先关闭灵动岛实时活动，再清理通话状态
+        CallLiveActivityController.shared.end()
         teardownConnection()
         state = .idle
         showUI = false
@@ -321,6 +344,17 @@ final class CallManager: NSObject, ObservableObject {
         callId = ""
         peerId = 0
         try? RTCAudioSession.sharedInstance().setActive(false)
+    }
+
+    /// 语音通话实时活动：接通后开启/更新，视频通话不进入灵动岛
+    private func syncLiveActivity() {
+        guard !isVideo, state == .active else { return }
+        let live = CallLiveActivityController.shared
+        if live.isActive {
+            live.update(status: statusText, muted: muted)
+        } else {
+            live.start(peerName: peerName, status: statusText, muted: muted)
+        }
     }
 
     // MARK: - SDP / ICE

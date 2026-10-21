@@ -252,7 +252,10 @@ final class CallManager: NSObject, ObservableObject {
         if !AppConfig.stunURLs.isEmpty {
             iceServers.append(RTCIceServer(urlStrings: AppConfig.stunURLs))
         }
-        if !AppConfig.turnURL.isEmpty {
+        if !AppConfig.turnURL.isEmpty,
+           !AppConfig.turnUsername.isEmpty,
+           !AppConfig.turnCredential.isEmpty {
+            // WebRTC 不允许 TURN 凭证为空；匿名 coturn 也需在客户端填任意非空值
             iceServers.append(RTCIceServer(urlStrings: [AppConfig.turnURL],
                                            username: AppConfig.turnUsername,
                                            credential: AppConfig.turnCredential))

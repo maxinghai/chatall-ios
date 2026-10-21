@@ -66,8 +66,8 @@ enum AppConfig {
     /// TURN 中继（服务器部署 coturn 后填写，留空则只用 STUN）。
     /// 例：turn:43.248.188.28:3478?transport=udp
     static let turnURL = "turn:103.40.14.14:56368?transport=udp"
-    static let turnUsername = ""
-    static let turnCredential = ""
+    static let turnUsername = "chatall"
+    static let turnCredential = "chatall"
 
     /// 只取主机名（去掉协议前缀和端口）
     static var hostOnly: String {

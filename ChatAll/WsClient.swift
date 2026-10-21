@@ -61,6 +61,9 @@ final class WsClient: NSObject {
         lastPongAt = Date()
     }
 
+    /// 当前是否已连接（前台自检用）
+    var isConnected: Bool { connected }
+
     /// 关闭当前传输（定时器 + task + session），不动重连计划
     private func closeTransport() {
         reconnectItem?.cancel()
@@ -205,10 +208,14 @@ final class WsClient: NSObject {
 
     /// 断线处理：统一投递到主线程，并校验 session 未被替换，
     /// 避免旧连接的迟到回调误杀新连接。
-    private func handleDisconnect() {
-        let staleSession = session
+    /// - Parameter trigger: 触发本次断线的 session（delegate 回调传入；
+    ///   看门狗/发送失败等无上下文场景不传，默认取当前 session）
+    private func handleDisconnect(trigger: URLSession? = nil) {
+        let triggerSession = trigger ?? session
         DispatchQueue.main.async { [weak self] in
-            guard let self = self, self.session === staleSession else { return }
+            guard let self = self,
+                  self.session === triggerSession,
+                  self.session != nil else { return }
             self.performDisconnect()
         }
     }
@@ -276,13 +283,13 @@ extension WsClient: URLSessionWebSocketDelegate {
                     didCloseWith closeCode: URLSessionWebSocketTask.CloseCode,
                     reason: Data?) {
         guard session === self.session else { return }
-        handleDisconnect()
+        handleDisconnect(trigger: session)
     }
 
     func urlSession(_ session: URLSession,
                     task: URLSessionTask,
                     didCompleteWithError error: Error?) {
         guard session === self.session else { return }
-        if error != nil { handleDisconnect() }
+        if error != nil { handleDisconnect(trigger: session) }
     }
 }

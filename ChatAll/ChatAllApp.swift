@@ -10,6 +10,7 @@ import SwiftUI
 @main
 struct ChatAllApp: App {
     @StateObject private var store = AppStore()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
@@ -17,6 +18,12 @@ struct ChatAllApp: App {
                 .environmentObject(store)
                 .onOpenURL { url in
                     handleURL(url)
+                }
+                .onChange(of: scenePhase) { phase in
+                    // 回到前台：检测连接状态，未连接自动重建（后台期间 socket 常被系统掐断）
+                    if phase == .active {
+                        store.ensureConnected()
+                    }
                 }
         }
     }

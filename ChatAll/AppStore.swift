@@ -134,6 +134,13 @@ final class AppStore: ObservableObject {
         ws.connect(token: token)
     }
 
+    /// 进入前台时的连接自检：已登录但未连接则强制重建 WebSocket，
+    /// 兜底 willEnterForeground 通知失效或重连状态机卡死的场景。
+    func ensureConnected() {
+        guard isLoggedIn, !ws.isConnected else { return }
+        ws.reconnectForForeground()
+    }
+
     // MARK: - 拉取数据
 
     func reloadAll() async {

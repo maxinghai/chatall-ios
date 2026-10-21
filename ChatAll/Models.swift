@@ -224,6 +224,7 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     enum CodingKeys: String, CodingKey {
         case id, msgId, fromId, toId, groupId, chatType, contentType
         case content, fileUrl, fileName, fileSize, duration, status, createdAt
+        case localState
     }
 
     init() {}
@@ -244,7 +245,27 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         duration = try? c.decodeIfPresent(Int.self, forKey: .duration)
         status = try? c.decodeIfPresent(Int.self, forKey: .status)
         createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
-        localState = 1
+        // 服务端消息默认已发送；本地存储读出的发送态需要保留
+        localState = (try? c.decode(Int.self, forKey: .localState)) ?? 1
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(msgId, forKey: .msgId)
+        try c.encode(fromId, forKey: .fromId)
+        try c.encodeIfPresent(toId, forKey: .toId)
+        try c.encodeIfPresent(groupId, forKey: .groupId)
+        try c.encode(chatType, forKey: .chatType)
+        try c.encode(contentType, forKey: .contentType)
+        try c.encodeIfPresent(content, forKey: .content)
+        try c.encodeIfPresent(fileUrl, forKey: .fileUrl)
+        try c.encodeIfPresent(fileName, forKey: .fileName)
+        try c.encodeIfPresent(fileSize, forKey: .fileSize)
+        try c.encodeIfPresent(duration, forKey: .duration)
+        try c.encodeIfPresent(status, forKey: .status)
+        try c.encodeIfPresent(createdAt, forKey: .createdAt)
+        try c.encode(localState, forKey: .localState)
     }
 
     /// 会话标识：单聊用对方 id，群聊用群 id

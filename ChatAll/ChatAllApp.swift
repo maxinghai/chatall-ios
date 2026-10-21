@@ -20,7 +20,8 @@ struct ChatAllApp: App {
                     handleURL(url)
                 }
                 .onChange(of: scenePhase) { phase in
-                    // 回到前台：检测连接状态，未连接自动重建（后台期间 socket 常被系统掐断）
+                    // 回到前台兜底：确保 socket 存在。
+                    // 后台期间 socket 被系统挂断时，由 WsClient 监听 didBecomeActive 强制重建。
                     if phase == .active {
                         store.ensureConnected()
                     }

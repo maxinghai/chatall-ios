@@ -9,23 +9,35 @@
 import Foundation
 import UIKit
 
+/// WebSocket 连接状态
+enum WsStatus: Equatable {
+    /// 未连接（已退出登录或未登录）
+    case offline
+    /// 正在建立连接 / 断线自动重连中
+    case connecting
+    /// 已连接
+    case online
+}
+
 final class WsClient: NSObject {
 
     /// 下行回调：type + data(已解析为字典，无 data 时为 nil)
     var onPacket: ((String, [String: Any]?) -> Void)?
-    /// 连接状态回调（true=已连接）
-    var onStateChange: ((Bool) -> Void)?
+    /// 连接状态回调
+    var onStatusChange: ((WsStatus) -> Void)?
 
     private var session: URLSession?
     private var task: URLSessionWebSocketTask?
     private var pingTimer: Timer?
     private var reconnectItem: DispatchWorkItem?
     private var openTimeoutItem: DispatchWorkItem?
-    private var foregroundObserver: NSObjectProtocol?
+    private var lifecycleObservers: [NSObjectProtocol] = []
 
     private var token: String = ""
     private var shouldReconnect = false
-    private var connected = false
+    private var status: WsStatus = .offline
+    /// 是否经历过一次后台（回前台时无论本地状态如何都强制重建，避免系统挂断后的"假在线"）
+    private var enteredBackground = false
     /// 最近一次收到服务端 PONG 的时间（看门狗用）
     private var lastPongAt = Date()
     private let pingInterval: TimeInterval = 25
@@ -34,25 +46,30 @@ final class WsClient: NSObject {
 
     // MARK: - 连接管理
 
-    func connect(token: String) {
+    /// 建立连接（幂等：已在连接或已连接时直接返回）。
+    /// - Parameter force: true 时丢弃当前连接强制重建（回前台用）
+    func connect(token: String, force: Bool = false) {
         self.token = token
         shouldReconnect = true
-        registerForeground()
+        registerLifecycle()
+        if !force && (task != nil || status == .online) { return }
+        closeTransport()
         openSocket()
     }
 
     func disconnect() {
         shouldReconnect = false
-        unregisterForeground()
+        enteredBackground = false
+        unregisterLifecycle()
         closeTransport()
-        setConnected(false)
+        setStatus(.offline)
     }
 
-    /// App 回到前台：后台期间 socket 已被系统挂断，强制重建连接
+    /// App 回到前台：后台期间 socket 已被系统挂断，本地状态可能仍是"在线"，
+    /// 因此必须强制重建，否则会一直处于收不到消息的假在线状态。
     func reconnectForForeground() {
         guard shouldReconnect else { return }
         closeTransport()
-        setConnected(false)
         openSocket()
     }
 
@@ -62,7 +79,7 @@ final class WsClient: NSObject {
     }
 
     /// 当前是否已连接（前台自检用）
-    var isConnected: Bool { connected }
+    var isConnected: Bool { status == .online }
 
     /// 关闭当前传输（定时器 + task + session），不动重连计划
     private func closeTransport() {
@@ -80,7 +97,10 @@ final class WsClient: NSObject {
     private func openSocket() {
         guard shouldReconnect, let url = AppConfig.wsURL(token: token) else { return }
         stopPing()
+        reconnectItem?.cancel()
+        reconnectItem = nil
         openTimeoutItem?.cancel()
+        openTimeoutItem = nil
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
@@ -90,11 +110,12 @@ final class WsClient: NSObject {
 
         let task = session.webSocketTask(with: url)
         self.task = task
+        setStatus(.connecting)
         task.resume()
 
         // 连接超时保护：15 秒仍未打开则按断线处理（重连）
         let item = DispatchWorkItem { [weak self] in
-            guard let self = self, self.task === task, !self.connected else { return }
+            guard let self = self, self.task === task, self.status != .online else { return }
             self.handleDisconnect()
         }
         openTimeoutItem = item
@@ -104,6 +125,8 @@ final class WsClient: NSObject {
     private func scheduleReconnect() {
         guard shouldReconnect else { return }
         reconnectItem?.cancel()
+        // 自动重连期间对外显示"连接中"
+        setStatus(.connecting)
         let item = DispatchWorkItem { [weak self] in
             guard let self = self, self.shouldReconnect else { return }
             self.openSocket()
@@ -112,31 +135,50 @@ final class WsClient: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + reconnectDelay, execute: item)
     }
 
-    private func setConnected(_ value: Bool) {
+    private func setStatus(_ value: WsStatus) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            if self.connected != value {
-                self.connected = value
-                self.onStateChange?(value)
+            if self.status != value {
+                self.status = value
+                self.onStatusChange?(value)
             }
         }
     }
 
-    // MARK: - 前台监听
+    // MARK: - App 生命周期监听
 
-    private func registerForeground() {
-        guard foregroundObserver == nil else { return }
-        foregroundObserver = NotificationCenter.default.addObserver(
-            forName: UIApplication.willEnterForegroundNotification,
+    private func registerLifecycle() {
+        guard lifecycleObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        lifecycleObservers.append(center.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            self?.reconnectForForeground()
-        }
+            self?.enteredBackground = true
+        })
+        lifecycleObservers.append(center.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.handleBecameActive()
+        })
     }
 
-    private func unregisterForeground() {
-        if let o = foregroundObserver { NotificationCenter.default.removeObserver(o) }
-        foregroundObserver = nil
+    private func unregisterLifecycle() {
+        lifecycleObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        lifecycleObservers.removeAll()
+    }
+
+    private func handleBecameActive() {
+        guard shouldReconnect else { return }
+        if enteredBackground {
+            // 从后台回来：系统多半已挂断 socket，无条件重建
+            enteredBackground = false
+            reconnectForForeground()
+        } else if task == nil {
+            // 冷启动前注册竞态 / 连接被系统清理，补一次连接
+            openSocket()
+        }
     }
 
     // MARK: - PING
@@ -223,12 +265,15 @@ final class WsClient: NSObject {
     private func performDisconnect() {
         openTimeoutItem?.cancel()
         openTimeoutItem = nil
-        setConnected(false)
         stopPing()
         task = nil
         session?.invalidateAndCancel()
         session = nil
-        scheduleReconnect()
+        if shouldReconnect {
+            scheduleReconnect()
+        } else {
+            setStatus(.offline)
+        }
     }
 
     // MARK: - 上行
@@ -271,7 +316,7 @@ extension WsClient: URLSessionWebSocketDelegate {
             self.lastPongAt = Date()
             self.openTimeoutItem?.cancel()
             self.openTimeoutItem = nil
-            self.setConnected(true)
+            self.setStatus(.online)
             // 连接成功后启动收帧循环与心跳（09e4427 重构时遗漏，导致收不到消息）
             self.startPing()
             self.receiveLoop()

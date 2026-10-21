@@ -27,7 +27,8 @@ struct ChatView: View {
     @State private var shareItem: ShareItem? = nil
     @State private var sending = false
     @StateObject private var recorder = VoiceRecorder()
-    @FocusState private var inputFocused: Bool
+    /// 输入框焦点（由 UIKit 输入框双向同步）：仅用于点击消息区时收键盘
+    @State private var inputFocused = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -206,11 +207,10 @@ struct ChatView: View {
             }
             .disabled(sending)
 
-            TextField("输入消息", text: $inputText)
-                .textFieldStyle(RoundedBorderTextFieldStyle())
-                .focused($inputFocused)
-                .submitLabel(.send)
-                .onSubmit { sendText() }
+            ChatInputField(text: $inputText,
+                           isFocused: $inputFocused,
+                           onSend: sendText)
+                .frame(maxWidth: .infinity)
 
             if inputText.trimmingCharacters(in: .whitespaces).isEmpty {
                 // 按住录音
@@ -263,11 +263,9 @@ struct ChatView: View {
         guard !text.isEmpty else { return }
         store.sendMessage(to: peerId, isGroup: isGroup,
                           contentType: "TEXT", content: text)
+        // 只清空文字，不动焦点：UIKit 输入框在发送键回调里已拒绝 resign，
+        // 键盘不会收起，也就不存在重新聚焦造成的回弹闪烁。
         inputText = ""
-        // 发送后保持键盘弹出：列表刷新可能让输入框失焦，稍后重新拉起焦点
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            inputFocused = true
-        }
     }
 
     private func sendImages(_ images: [UIImage]) {
@@ -422,6 +420,90 @@ struct ChatView: View {
             previewItem = PreviewItem(urls: imageURLs, index: idx)
         } else {
             previewItem = PreviewItem(urls: [url], index: 0)
+        }
+    }
+}
+
+// MARK: - 聊天输入框
+
+/// SwiftUI 的 TextField 按下键盘「发送」键（onSubmit）后会主动 resignFirstResponder，
+/// 键盘必然收起；再靠延时重新聚焦就会看到键盘回弹闪烁。
+/// 这里用 UITextField 代理拦截回车：发送后返回 false，不释放第一响应者，
+/// 键盘全程不关闭，输入框焦点也不丢失。
+private struct ChatInputField: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var isFocused: Bool
+    let onSend: () -> Void
+
+    func makeUIView(context: Context) -> UITextField {
+        let field = UITextField()
+        field.delegate = context.coordinator
+        field.borderStyle = .roundedRect
+        field.font = .systemFont(ofSize: 17)
+        field.placeholder = "输入消息"
+        field.returnKeyType = .send
+        field.text = text
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        field.addTarget(context.coordinator,
+                        action: #selector(Coordinator.textChanged(_:)),
+                        for: .editingChanged)
+        return field
+    }
+
+    func updateUIView(_ field: UITextField, context: Context) {
+        context.coordinator.parent = self
+        // 拼音等输入法正在组合输入（markedTextRange 非空）时不覆盖文本，避免打断联想
+        if field.markedTextRange == nil, field.text != text {
+            field.text = text
+        }
+        if isFocused, !field.isFirstResponder {
+            field.becomeFirstResponder()
+        } else if !isFocused, field.isFirstResponder {
+            field.resignFirstResponder()
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        var parent: ChatInputField
+
+        init(_ parent: ChatInputField) {
+            self.parent = parent
+        }
+
+        @objc func textChanged(_ field: UITextField) {
+            parent.text = field.text ?? ""
+        }
+
+        func textFieldDidBeginEditing(_ textField: UITextField) {
+            if !parent.isFocused { parent.isFocused = true }
+        }
+
+        func textFieldDidEndEditing(_ textField: UITextField) {
+            if parent.isFocused { parent.isFocused = false }
+        }
+
+        /// 返回 false：键盘的「发送」键只触发发送，不让输入框退出第一响应者。
+        /// 键盘因此不会收起，也不会出现重新弹出的回弹动画。
+        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            parent.onSend()
+            return false
+        }
+
+        /// 部分第三方输入法的「发送」键是插入换行而非触发 return，这里同样拦截，
+        /// 避免换行被吞掉或输入框因此失焦。
+        func textField(_ textField: UITextField,
+                       shouldChangeCharactersIn range: NSRange,
+                       replacementString string: String) -> Bool {
+            if string == "\n" {
+                parent.onSend()
+                return false
+            }
+            return true
         }
     }
 }

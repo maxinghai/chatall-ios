@@ -8,6 +8,21 @@
 import Foundation
 import SwiftUI
 
+/// 顶部标题栏展示的连接状态
+enum ConnectionState: Equatable {
+    case offline
+    case connecting
+    case online
+
+    var title: String {
+        switch self {
+        case .offline: return "离线"
+        case .connecting: return "连接中"
+        case .online: return "在线"
+        }
+    }
+}
+
 @MainActor
 final class AppStore: ObservableObject {
 
@@ -17,7 +32,7 @@ final class AppStore: ObservableObject {
     @Published var isLoggedIn: Bool = false
 
     // MARK: - 连接状态
-    @Published var connected: Bool = false
+    @Published var connectionState: ConnectionState = .offline
     /// 通话界面显隐（镜像 CallManager.showUI，让 MainView 能可靠订阅）
     @Published var callUIVisible: Bool = false
 
@@ -60,11 +75,15 @@ final class AppStore: ObservableObject {
                 self.handlePacket(type: type, data: data)
             }
         }
-        ws.onStateChange = { [weak self] value in
+        ws.onStatusChange = { [weak self] value in
             guard let self = self else { return }
             Task { @MainActor in
-                self.connected = value
-                if value && self.isLoggedIn {
+                switch value {
+                case .offline: self.connectionState = .offline
+                case .connecting: self.connectionState = .connecting
+                case .online:
+                    self.connectionState = .online
+                    guard self.isLoggedIn else { return }
                     if self.everConnected {
                         // 断线重连成功：补拉列表与离线消息
                         Task { await self.reloadAll() }
@@ -78,6 +97,13 @@ final class AppStore: ObservableObject {
             Task { @MainActor in
                 self?.callUIVisible = visible
             }
+        }
+
+        // 冷启动 / App 被杀后重开：还原登录态后必须主动重建连接，
+        // 否则只有点击登录时才会连接，重进 App 会一直显示离线。
+        if isLoggedIn {
+            connectWS()
+            Task { await reloadAll() }
         }
     }
 
@@ -109,7 +135,8 @@ final class AppStore: ObservableObject {
         token = result.token
         currentUser = result.user
         isLoggedIn = true
-        connectWS()
+        everConnected = false
+        ws.connect(token: result.token, force: true)
         Task { await self.reloadAll() }
     }
 
@@ -120,6 +147,8 @@ final class AppStore: ObservableObject {
         token = ""
         currentUser = nil
         isLoggedIn = false
+        everConnected = false
+        connectionState = .offline
         friends = []
         groups = []
         pendingRequests = []
@@ -127,6 +156,8 @@ final class AppStore: ObservableObject {
         unreadCounts = [:]
         activePeerId = nil
         historyLoadedPeers.removeAll()
+        // 清空本地消息存储
+        MessageStore.clearAll()
     }
 
     func connectWS() {
@@ -134,11 +165,11 @@ final class AppStore: ObservableObject {
         ws.connect(token: token)
     }
 
-    /// 进入前台时的连接自检：已登录但未连接则强制重建 WebSocket，
-    /// 兜底 willEnterForeground 通知失效或重连状态机卡死的场景。
+    /// 进入前台时的连接自检：已登录则确保 socket 存在。
+    /// connect 本身幂等；后台归来的强制重建由 WsClient 自己监听生命周期完成。
     func ensureConnected() {
-        guard isLoggedIn, !ws.isConnected else { return }
-        ws.reconnectForForeground()
+        guard isLoggedIn, !token.isEmpty else { return }
+        ws.connect(token: token)
     }
 
     // MARK: - 拉取数据
@@ -198,7 +229,13 @@ final class AppStore: ObservableObject {
     func openConversation(peerId: Int64, isGroup: Bool) async {
         activePeerId = peerId
         unreadCounts[peerId] = 0
-        // 历史只加载一次：已有缓存直接用，避免每次进入都重新请求
+
+        // 本地优先：先从磁盘加载历史消息，瞬间渲染，避免空白等待网络
+        if messagesByPeer[peerId] == nil {
+            messagesByPeer[peerId] = MessageStore.load(peerId: peerId)
+        }
+
+        // 后台拉网络刷新；同一会话本生命周期内只拉一次
         guard !historyLoadedPeers.contains(peerId) else { return }
         do {
             let list: [ChatMessage]
@@ -215,6 +252,8 @@ final class AppStore: ObservableObject {
             }
             messagesByPeer[peerId] = merged
             historyLoadedPeers.insert(peerId)
+            // 回写本地，下次冷启动直接显示
+            MessageStore.save(peerId: peerId, messages: merged)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -238,6 +277,8 @@ final class AppStore: ObservableObject {
         if list.contains(where: { $0.msgId == msg.msgId && !$0.msgId.isEmpty }) { return }
         list.append(msg)
         messagesByPeer[key] = list
+        // 持久化到本地
+        MessageStore.save(peerId: key, messages: list)
 
         if activePeerId != key {
             unreadCounts[key] = (unreadCounts[key] ?? 0) + 1
@@ -299,6 +340,8 @@ final class AppStore: ObservableObject {
         var list = messagesByPeer[peerId] ?? []
         list.append(msg)
         messagesByPeer[peerId] = list
+        // 持久化到本地（发送中态也保存，冷启动后仍显示）
+        MessageStore.save(peerId: peerId, messages: list)
 
         var data: [String: Any] = [
             "msgId": msgId,
@@ -367,6 +410,8 @@ final class AppStore: ObservableObject {
             list[idx].localState = 1
             if msg.id > 0 { list[idx].id = msg.id }
             messagesByPeer[key] = list
+            // 回写本地（更新发送态）
+            MessageStore.save(peerId: key, messages: list)
         }
     }
 
@@ -420,6 +465,8 @@ final class AppStore: ObservableObject {
             messagesByPeer[friendId] = nil
             unreadCounts[friendId] = nil
             historyLoadedPeers.remove(friendId)
+            // 同步删除本地消息文件
+            MessageStore.remove(peerId: friendId)
         } catch { errorMessage = error.localizedDescription }
     }
 

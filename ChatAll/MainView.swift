@@ -32,6 +32,9 @@ struct MainView: View {
             }
             .navigationBarTitle(tabTitle, displayMode: .inline)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    connectionBadge
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     pendingButton
                 }
@@ -80,6 +83,25 @@ struct MainView: View {
                   message: Text(store.errorMessage ?? ""),
                   dismissButton: .default(Text("知道了")))
         }
+    }
+
+    // MARK: - 左上角连接状态
+
+    private var connectionBadge: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(store.connectionState.color)
+                .frame(width: 7, height: 7)
+            Text(store.connectionState.title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(store.connectionState.color)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(store.connectionState.color.opacity(0.12))
+        .clipShape(Capsule())
+        .animation(.easeInOut(duration: 0.2), value: store.connectionState)
+        .accessibilityLabel("连接状态：\(store.connectionState.title)")
     }
 
     // MARK: - 右上角铃铛（新的朋友）
@@ -284,6 +306,18 @@ struct MainView: View {
                 .cornerRadius(10)
                 .padding(.top, 8)
                 .transition(.opacity)
+        }
+    }
+}
+
+// MARK: - 连接状态配色
+
+extension ConnectionState {
+    var color: Color {
+        switch self {
+        case .offline: return .gray
+        case .connecting: return .orange
+        case .online: return .chatGreen
         }
     }
 }

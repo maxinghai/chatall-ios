@@ -11,6 +11,7 @@
 
 import Foundation
 import AVFoundation
+import CoreMedia
 import WebRTC
 
 enum CallState: Int {
@@ -247,7 +248,18 @@ final class CallManager: NSObject, ObservableObject {
         let f = ensureFactory()
 
         let config = RTCConfiguration()
-        config.iceServers = [RTCIceServer(urlStrings: ["stun:stun.l.google.com:19302"])]
+        var iceServers: [RTCIceServer] = []
+        if !AppConfig.stunURLs.isEmpty {
+            iceServers.append(RTCIceServer(urlStrings: AppConfig.stunURLs))
+        }
+        if !AppConfig.turnURL.isEmpty {
+            iceServers.append(RTCIceServer(urlStrings: [AppConfig.turnURL],
+                                           username: AppConfig.turnUsername,
+                                           credential: AppConfig.turnCredential))
+        }
+        config.iceServers = iceServers
+        // 预收集候选，缩短建立通话的等待时间
+        config.iceCandidatePoolSize = 2
         config.sdpSemantics = .unifiedPlan
         config.continualGatheringPolicy = .gatherContinually
 
@@ -407,8 +419,22 @@ final class CallManager: NSObject, ObservableObject {
             return
         }
         let formats = RTCCameraVideoCapturer.supportedFormats(for: device)
-        guard let format = formats.last else { return }
-        let fps = format.videoSupportedFrameRateRanges.first?.maxFrameRate ?? 30
+        // 选最接近 1280x720 的格式：原来取 formats.last（常见 4K/1080p60），
+        // 采集与编码开销过大会导致画面卡顿、首帧延迟。
+        var best: AVCaptureDevice.Format?
+        var bestScore = CGFloat.greatestFiniteMagnitude
+        for f in formats {
+            let dims = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
+            guard let range = f.videoSupportedFrameRateRanges.first, range.maxFrameRate >= 24 else { continue }
+            let score = abs(CGFloat(dims.width) - 1280) + abs(CGFloat(dims.height) - 720)
+            if score < bestScore {
+                bestScore = score
+                best = f
+            }
+        }
+        guard let format = best ?? formats.last else { return }
+        let maxFps = format.videoSupportedFrameRateRanges.first?.maxFrameRate ?? 30
+        let fps = min(maxFps, 30)
         cam.startCapture(with: device, format: format, fps: Int(fps))
     }
 

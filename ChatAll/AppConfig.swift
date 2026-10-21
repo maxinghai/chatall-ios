@@ -60,6 +60,33 @@ enum AppConfig {
     }
 
     // MARK: 文件 URL
+
+    // MARK: ICE（STUN / TURN）
+
+    /// TURN 中继（服务器部署 coturn 后填写，留空则只用 STUN）。
+    /// 例：turn:43.248.188.28:3478?transport=udp
+    static let turnURL = ""
+    static let turnUsername = ""
+    static let turnCredential = ""
+
+    /// 只取主机名（去掉协议前缀和端口）
+    static var hostOnly: String {
+        var h = host.trimmingCharacters(in: .whitespaces)
+        if let r = h.range(of: "://") { h = String(h[r.upperBound...]) }
+        if let i = h.firstIndex(of: ":") { h = String(h[..<i]) }
+        return h
+    }
+
+    /// STUN 列表：自有服务器优先（部署 coturn 后可直连），
+    /// 再兜底国内可达的公共 STUN——原 stun.l.google.com 在国内不可达，
+    /// 会让 ICE 收集长时间等待，通话建立明显变慢。
+    static var stunURLs: [String] {
+        ["stun:\(hostOnly):3478",
+         "stun:stun.qq.com:3478",
+         "stun:stun.miwifi.com:3478",
+         "stun:stun.chat.bilibili.com:3478"]
+    }
+
     /// 把服务端返回的相对路径拼成完整 URL
     static func fileURL(_ path: String?) -> URL? {
         guard let path = path, !path.isEmpty else { return nil }

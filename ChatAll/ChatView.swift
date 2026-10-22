@@ -853,7 +853,8 @@ private struct RecordingOverlayView: View {
 
                 // 读秒
                 Text(String(format: "%02d:%02d", seconds / 60, seconds % 60))
-                    .font(.system(size: 34, weight: .bold, design: .monospacedDigit))
+                    .font(.system(size: 34, weight: .bold, design: .monospaced))
+                    .monospacedDigit()
                     .foregroundColor(.white)
 
                 // 波形条

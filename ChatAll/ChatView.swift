@@ -210,7 +210,7 @@ struct ChatView: View {
             ChatInputField(text: $inputText,
                            isFocused: $inputFocused,
                            onSend: sendText)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, minHeight: 34, maxHeight: 34)
 
             if inputText.trimmingCharacters(in: .whitespaces).isEmpty {
                 // 按住录音
@@ -445,6 +445,7 @@ private struct ChatInputField: UIViewRepresentable {
         field.text = text
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        field.setContentHuggingPriority(.required, for: .vertical)
         field.addTarget(context.coordinator,
                         action: #selector(Coordinator.textChanged(_:)),
                         for: .editingChanged)

@@ -15,6 +15,8 @@ final class VoiceRecorder: ObservableObject {
     @Published var isRecording = false
     /// 已录时长（秒）
     @Published var seconds = 0
+    /// 当前音量（0~1，用于波形动画）
+    @Published var power: Float = 0
     /// 当前正在播放的 URL（nil 表示未播放）
     @Published var playingURL: URL? = nil
 
@@ -22,6 +24,7 @@ final class VoiceRecorder: ObservableObject {
     private var player: AVAudioPlayer?
     private var timer: Timer?
     private var recordURL: URL?
+    private var lastTickSecond = 0
 
     /// 采样率（与其它端互通的关键）
     static let sampleRate: Double = 16000
@@ -65,6 +68,8 @@ final class VoiceRecorder: ObservableObject {
         self.recorder = rec
         self.recordURL = url
         self.seconds = 0
+        self.power = 0
+        self.lastTickSecond = 0
         self.isRecording = true
         startTimer()
     }
@@ -75,6 +80,7 @@ final class VoiceRecorder: ObservableObject {
         rec.stop()
         stopTimer()
         isRecording = false
+        power = 0
         recorder = nil
         let url = recordURL
         recordURL = nil
@@ -89,6 +95,7 @@ final class VoiceRecorder: ObservableObject {
         rec.stop()
         stopTimer()
         isRecording = false
+        power = 0
         recorder = nil
         recordURL = nil
         if let url = url { try? FileManager.default.removeItem(at: url) }
@@ -97,9 +104,31 @@ final class VoiceRecorder: ObservableObject {
 
     private func startTimer() {
         stopTimer()
-        // 每 1 秒计 1 次，避免时长翻倍
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.seconds += 1
+        // 0.1s 一次：读 metering 更新音量波形；每满整秒 seconds += 1
+        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            self?.tickMeter()
+        }
+    }
+
+    private func tickMeter() {
+        guard let rec = recorder else { return }
+        rec.updateMeters()
+        // averagePower(forChannel:) 返回 -160dB ~ 0dB，归一化到 0~1
+        let avg = rec.averagePower(forChannel: 0)
+        let peak = rec.peakPower(forChannel: 0)
+        let db = max(avg, peak)
+        let normalized = max(0, min(1, (db + 60) / 60))   // -60dB → 0, 0dB → 1
+        // 波形更明显一点
+        power = pow(normalized, 0.6)
+
+        let elapsed = Int(Date().timeIntervalSince(rec.deviceCurrentTime > 0
+            ? Date(timeIntervalSinceReferenceDate: 0) : Date()))
+        // 简单用 seconds 自增：100ms 一次，每 10 次秒数 +1
+        let _ = elapsed
+        lastTickSecond += 1
+        if lastTickSecond >= 10 {
+            lastTickSecond = 0
+            seconds += 1
         }
     }
 

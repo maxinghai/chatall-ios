@@ -88,20 +88,14 @@ struct MainView: View {
     // MARK: - 左上角连接状态
 
     private var connectionBadge: some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(store.connectionState.color)
-                .frame(width: 7, height: 7)
-            Text(store.connectionState.title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(store.connectionState.color)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(store.connectionState.color.opacity(0.12))
-        .clipShape(Capsule())
-        .animation(.easeInOut(duration: 0.2), value: store.connectionState)
-        .accessibilityLabel("连接状态：\(store.connectionState.title)")
+        // 导航栏左上角空间有限，iOS 26/27 的玻璃按钮会把文字截断，
+        // 这里只用彩色圆点表示连接状态（绿=在线、黄=连接中、红=离线）。
+        Circle()
+            .fill(store.connectionState.color)
+            .frame(width: 10, height: 10)
+            .padding(6)
+            .animation(.easeInOut(duration: 0.2), value: store.connectionState)
+            .accessibilityLabel("连接状态：\(store.connectionState.title)")
     }
 
     // MARK: - 右上角铃铛（新的朋友）

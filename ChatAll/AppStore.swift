@@ -212,24 +212,24 @@ final class AppStore: ObservableObject {
             df.string(from: now.addingTimeInterval(-offsetSec))
         }
 
-        currentUser = UserInfo(id: 1001, username: "demo", nickname: "演示用户", avatar: "", email: "")
+        var me = UserInfo()
+        me.id = 1001; me.username = "demo"; me.nickname = "演示用户"
+        currentUser = me
         token = "demo"
         isLoggedIn = true
         connectionState = .online
 
-        // Mock 好友
-        friends = [
-            FriendItem(id: 2001, username: "alice", nickname: "爱丽丝", avatar: "", remark: "好朋友", online: true),
-            FriendItem(id: 2002, username: "bob", nickname: "鲍勃", avatar: "", remark: "", online: false),
-            FriendItem(id: 2003, username: "carol", nickname: "卡罗尔", avatar: "", remark: "同事", online: true),
-            FriendItem(id: 2004, username: "david", nickname: "大卫", avatar: "", remark: "", online: false),
-        ]
+        // Mock 好友（自定义 init()，属性逐个赋值）
+        var a = FriendItem(); a.id = 2001; a.username = "alice"; a.nickname = "爱丽丝"; a.remark = "好朋友"; a.online = true
+        var b = FriendItem(); b.id = 2002; b.username = "bob"; b.nickname = "鲍勃"; b.online = false
+        var c = FriendItem(); c.id = 2003; c.username = "carol"; c.nickname = "卡罗尔"; c.remark = "同事"; c.online = true
+        var d = FriendItem(); d.id = 2004; d.username = "david"; d.nickname = "大卫"; d.online = false
+        friends = [a, b, c, d]
 
         // Mock 群组
-        groups = [
-            GroupItem(id: 3001, name: "项目开发组", avatar: "", ownerId: 1001, memberCount: 8),
-            GroupItem(id: 3002, name: "周末聚餐", avatar: "", ownerId: 2001, memberCount: 12),
-        ]
+        var g1 = GroupItem(); g1.id = 3001; g1.name = "项目开发组"; g1.ownerId = 1001; g1.memberCount = 8
+        var g2 = GroupItem(); g2.id = 3002; g2.name = "周末聚餐"; g2.ownerId = 2001; g2.memberCount = 12
+        groups = [g1, g2]
 
         // Mock 消息
         messagesByPeer = [:]

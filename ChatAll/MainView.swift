@@ -150,7 +150,10 @@ struct MainView: View {
 
     @ViewBuilder
     private var content: some View {
-        tab == 0 ? conversationList : ProfileView().padding(.bottom, 56)
+        switch tab {
+        case 0: conversationList
+        default: ProfileView().padding(.bottom, 56)
+        }
     }
 
     /// 会话行数据：朋友 / 群组统一展示，按最后消息时间倒序

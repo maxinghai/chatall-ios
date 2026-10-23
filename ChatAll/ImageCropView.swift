@@ -2,103 +2,112 @@
 //  ImageCropView.swift
 //  ChatAll
 //
-//  背景图裁剪：按屏幕比例裁剪，支持双指缩放 + 拖动。
-//  裁剪后的图片直接就是屏幕大小比例，作为聊天背景铺满。
+//  背景图裁剪：保持图片原始比例，按屏幕比例裁剪，支持双指缩放 + 拖动。
 //
 
 import SwiftUI
 
 struct ImageCropView: View {
-    /// 已经缩放到屏幕尺寸的图片（避免直接渲染 4000×3000 原图导致卡顿）
+    /// 缩小后的图片（保持原始比例，最大边不超过 2000px，避免大图卡顿）
     private let displayImage: UIImage
     let onCancel: () -> Void
     let onComplete: (UIImage) -> Void
 
-    @State private var scale: CGFloat = 1.0
+    /// 让图片刚好填满屏幕的初始缩放（aspectFill）
+    private let baseScale: CGFloat
+    @State private var scale: CGFloat
     @State private var translation: CGSize = .zero
-    @State private var lastScale: CGFloat = 1.0
+    @State private var lastScale: CGFloat
     @State private var lastTranslation: CGSize = .zero
 
     /// 屏幕大小 = 裁剪框大小（背景图就是全屏）
     private let screenSize = UIScreen.main.bounds.size
 
     init(image: UIImage, onCancel: @escaping () -> Void, onComplete: @escaping (UIImage) -> Void) {
-        // 进入裁剪页前先把图片缩放到屏幕尺寸（保持比例填满），避免大图渲染卡顿
-        self.displayImage = ImageCropView.prepareImage(image, screenSize: UIScreen.main.bounds.size)
+        // 只缩小、不裁剪，保持原始比例
+        self.displayImage = ImageCropView.downscale(image, maxEdge: 2000)
         self.onCancel = onCancel
         self.onComplete = onComplete
+        let iw = self.displayImage.size.width
+        let ih = self.displayImage.size.height
+        let sw = UIScreen.main.bounds.width
+        let sh = UIScreen.main.bounds.height
+        self.baseScale = max(sw / iw, sh / ih)
+        _scale = State(initialValue: self.baseScale)
+        _lastScale = State(initialValue: self.baseScale)
     }
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-
-            // 可缩放、可拖动的图片（displayImage 已铺满屏幕，scale 从 1 开始放大）
-            Image(uiImage: displayImage)
-                .resizable()
-                .frame(width: displayImage.size.width * scale,
-                       height: displayImage.size.height * scale)
-                .offset(translation)
-                .clipped()
-
-            // 底部操作栏（不 extends 到安全区外，按钮一定可见）
-            VStack(spacing: 0) {
-                Spacer()
-                VStack(spacing: 14) {
-                    Text("拖动和缩放调整图片位置")
-                        .font(.system(size: 14))
-                        .foregroundColor(.white.opacity(0.85))
-
-                    HStack(spacing: 24) {
-                        Button("取消") { onCancel() }
-                            .font(.system(size: 17, weight: .medium))
-                            .foregroundColor(.white)
-                            .frame(minWidth: 64)
-
-                        Spacer()
-
-                        Button {
-                            if let cropped = crop() { onComplete(cropped) }
-                        } label: {
-                            Text("完成")
-                                .font(.system(size: 17, weight: .semibold))
-                                .foregroundColor(.black)
-                                .frame(minWidth: 80)
-                                .padding(.horizontal, 20)
-                                .padding(.vertical, 9)
-                                .background(Color.white)
-                                .cornerRadius(20)
-                        }
-                    }
-                    .padding(.horizontal, 28)
-                }
-                .padding(.top, 14)
-                .padding(.bottom, 20)   // 留给 Home indicator 的空间
-                .background(Color.black.opacity(0.7))
+        VStack(spacing: 0) {
+            // 图片裁剪区域（占满上方所有空间）
+            ZStack {
+                Color.black
+                Image(uiImage: displayImage)
+                    .resizable()
+                    .frame(width: displayImage.size.width * scale,
+                           height: displayImage.size.height * scale)
+                    .offset(translation)
+                    .clipped()
             }
-        }
-        .gesture(
-            SimultaneousGesture(
-                DragGesture()
-                    .onChanged { value in
-                        translation = CGSize(
-                            width: lastTranslation.width + value.translation.width,
-                            height: lastTranslation.height + value.translation.height
-                        )
-                    }
-                    .onEnded { _ in
-                        lastTranslation = translation
-                    },
-                MagnificationGesture()
-                    .onChanged { value in
-                        // 不允许缩到比初始（1.0）更小，保证始终填满屏幕
-                        scale = max(lastScale * value, 1.0)
-                    }
-                    .onEnded { _ in
-                        lastScale = scale
-                    }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .gesture(
+                SimultaneousGesture(
+                    DragGesture()
+                        .onChanged { value in
+                            translation = CGSize(
+                                width: lastTranslation.width + value.translation.width,
+                                height: lastTranslation.height + value.translation.height
+                            )
+                        }
+                        .onEnded { _ in
+                            lastTranslation = translation
+                        },
+                    MagnificationGesture()
+                        .onChanged { value in
+                            // 不允许缩到比 baseScale 更小，保证始终填满屏幕
+                            scale = max(lastScale * value, baseScale)
+                        }
+                        .onEnded { _ in
+                            lastScale = scale
+                        }
+                )
             )
-        )
+
+            // 底部操作栏（VStack 内，安全区内，一定可见）
+            VStack(spacing: 12) {
+                Text("拖动和缩放调整图片位置")
+                    .font(.system(size: 14))
+                    .foregroundColor(.white.opacity(0.85))
+
+                HStack(spacing: 24) {
+                    Button("取消") { onCancel() }
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundColor(.white)
+                        .frame(minWidth: 64)
+
+                    Spacer()
+
+                    Button {
+                        if let cropped = crop() { onComplete(cropped) }
+                    } label: {
+                        Text("完成")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundColor(.black)
+                            .frame(minWidth: 80)
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 10)
+                            .background(Color.white)
+                            .cornerRadius(22)
+                    }
+                }
+                .padding(.horizontal, 28)
+            }
+            .padding(.top, 14)
+            .padding(.bottom, 20)
+            .frame(maxWidth: .infinity)
+            .background(Color.black.opacity(0.85))
+        }
+        .ignoresSafeArea()
     }
 
     /// 根据当前 scale + translation 计算裁剪矩形并裁剪
@@ -109,67 +118,38 @@ struct ImageCropView: View {
         let ch = screenSize.height
 
         // 图片左上角在屏幕坐标系中的位置 = 屏幕中心 + translation - 图片显示尺寸/2
-        // 反推：屏幕左上角 (0,0) 在图片坐标系中的位置 =
+        // 屏幕左上角 (0,0) 在图片坐标系中的位置 =
         //   (iw*scale/2 - cw/2 - tx, ih*scale/2 - ch/2 - ty)
-        // 再除以 scale 得到原图坐标系
         let cropX = iw / 2 - cw / (2 * scale) - translation.width / scale
         let cropY = ih / 2 - ch / (2 * scale) - translation.height / scale
         let cropW = cw / scale
         let cropH = ch / scale
 
         var rect = CGRect(x: cropX, y: cropY, width: cropW, height: cropH)
-        // Clamp 到图片范围内
         rect = rect.intersection(CGRect(x: 0, y: 0, width: iw, height: ih))
         guard rect.width > 1, rect.height > 1 else { return displayImage }
 
-        // 用 UIGraphicsImageRenderer 裁剪（自动处理 imageOrientation）
         let renderer = UIGraphicsImageRenderer(size: rect.size)
         return renderer.image { _ in
             displayImage.draw(at: CGPoint(x: -rect.minX, y: -rect.minY))
         }
     }
 
-    // MARK: - 图片预处理
+    // MARK: - 图片缩小（保持原始比例，不裁剪）
 
-    /// 把原图缩放到"刚好填满屏幕"的尺寸，避免大图渲染卡顿
-    /// 返回的图片比例 = 屏幕比例（aspectFill 裁剪后）
-    private static func prepareImage(_ image: UIImage, screenSize: CGSize) -> UIImage {
+    /// 把图片缩小到最大边不超过 maxEdge，保持原始比例
+    private static func downscale(_ image: UIImage, maxEdge: CGFloat) -> UIImage {
         let iw = image.size.width
         let ih = image.size.height
         guard iw > 0, ih > 0 else { return image }
+        let longest = max(iw, ih)
+        guard longest > maxEdge else { return image }
 
-        // 以屏幕比例 aspectFill 裁剪，裁出中间区域（UIImage 坐标系：左上为原点）
-        let screenRatio = screenSize.width / screenSize.height
-        let imgRatio = iw / ih
-        let cropRect: CGRect
-        if imgRatio > screenRatio {
-            // 图片更宽，裁掉左右
-            let w = ih * screenRatio
-            cropRect = CGRect(x: (iw - w) / 2, y: 0, width: w, height: ih)
-        } else {
-            // 图片更高，裁掉上下
-            let h = iw / screenRatio
-            cropRect = CGRect(x: 0, y: (ih - h) / 2, width: iw, height: h)
-        }
-
-        // 先用 cgImage.cropping(to:) 裁出中间区域（注意 CGImage 坐标系是左下原点，需要翻转 y）
-        guard let cgImage = image.cgImage else { return image }
-        let cgCropRect = CGRect(
-            x: cropRect.minX * image.scale,
-            y: (ih - cropRect.maxY) * image.scale,
-            width: cropRect.width * image.scale,
-            height: cropRect.height * image.scale
-        )
-        guard let croppedCG = cgImage.cropping(to: cgCropRect) else { return image }
-        let cropped = UIImage(cgImage: croppedCG, scale: image.scale, orientation: image.imageOrientation)
-
-        // 再缩放到屏幕像素尺寸（@2x/@3x 清晰）
-        let scale = UIScreen.main.scale
-        let targetSize = CGSize(width: screenSize.width * scale,
-                                height: screenSize.height * scale)
+        let ratio = maxEdge / longest
+        let targetSize = CGSize(width: iw * ratio, height: ih * ratio)
         let renderer = UIGraphicsImageRenderer(size: targetSize)
         return renderer.image { _ in
-            cropped.draw(in: CGRect(origin: .zero, size: targetSize))
+            image.draw(in: CGRect(origin: .zero, size: targetSize))
         }
     }
 }

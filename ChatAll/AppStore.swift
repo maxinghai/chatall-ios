@@ -69,11 +69,17 @@ final class AppStore: ObservableObject {
     func setBackgroundImage(_ image: UIImage?) {
         guard let image else {
             AppConfig.clearBackground()
+            _bgImageCache.removeAllObjects()
             backgroundURL = nil
             return
         }
         if AppConfig.saveBackgroundImage(image) {
-            backgroundURL = AppConfig.backgroundImageURL
+            // 保存的是同一个 bg.jpg 路径，URL 不变，需要清缓存 + 强制刷新
+            _bgImageCache.removeAllObjects()
+            let url = AppConfig.backgroundImageURL
+            backgroundURL = nil
+            objectWillChange.send()
+            backgroundURL = url
         } else {
             errorMessage = "背景图保存失败"
         }
@@ -81,6 +87,7 @@ final class AppStore: ObservableObject {
 
     func clearBackgroundImage() {
         AppConfig.clearBackground()
+        _bgImageCache.removeAllObjects()
         backgroundURL = nil
     }
 
@@ -816,17 +823,34 @@ final class AppStore: ObservableObject {
 
 // MARK: - 液态玻璃背景（跨页面共用）
 
-/// 全页背景：若用户设置了背景图，底层放一张填满屏幕的 Image（本地文件用同步加载，避免 AsyncImage 闪烁）
+/// 背景图缓存：避免每次视图刷新都从磁盘 UIImage(contentsOfFile:)
+private var _bgImageCache: NSCache<NSURL, UIImage> = {
+    let c = NSCache<NSURL, UIImage>()
+    c.countLimit = 3
+    return c
+}()
+
+/// 全页背景：若用户设置了背景图，底层放一张填满屏幕的 Image
 struct ChatBackgroundImageView: View {
     let url: URL?
     var body: some View {
-        if let url, let image = UIImage(contentsOfFile: url.path) {
+        if let url, let image = loadImage(url) {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFill()
                 .ignoresSafeArea()
                 .transition(.opacity)
         }
+    }
+
+    /// 带缓存的图片加载：同一 URL 只从磁盘读一次
+    private func loadImage(_ url: URL) -> UIImage? {
+        if let cached = _bgImageCache.object(forKey: url as NSURL) {
+            return cached
+        }
+        guard let img = UIImage(contentsOfFile: url.path) else { return nil }
+        _bgImageCache.setObject(img, forKey: url as NSURL)
+        return img
     }
 }
 

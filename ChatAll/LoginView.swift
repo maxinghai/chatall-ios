@@ -17,6 +17,7 @@ struct LoginView: View {
     @State private var host = AppConfig.host
     @State private var showAdvanced = false
     @State private var loading = false
+    @State private var demoMode = AppConfig.demoMode
 
     var body: some View {
         ScrollView {
@@ -78,7 +79,7 @@ struct LoginView: View {
                 Button(action: submit) {
                     HStack {
                         if loading { ProgressView().tint(.white) }
-                        Text(isRegister ? "注册并登录" : "登录")
+                        Text(AppConfig.demoMode ? "进入演示" : (isRegister ? "注册并登录" : "登录"))
                             .font(.system(size: 17, weight: .medium))
                             .foregroundColor(.white)
                     }
@@ -87,7 +88,7 @@ struct LoginView: View {
                     .background(Color.chatGreen)
                     .cornerRadius(10)
                 }
-                .disabled(loading || username.isEmpty || password.isEmpty)
+                .disabled(loading || (!AppConfig.demoMode && (username.isEmpty || password.isEmpty)))
 
                 // 切换登录/注册
                 Button(action: {
@@ -133,6 +134,25 @@ struct LoginView: View {
                 }
                 .padding(.top, 8)
 
+                // Demo 模式
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("演示模式")
+                            .font(.system(size: 14))
+                        Text("打开后无需登录，直接浏览示例数据")
+                            .font(.system(size: 12))
+                            .foregroundColor(.gray)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $demoMode)
+                        .labelsHidden()
+                        .onChange(of: demoMode) { v in
+                            AppConfig.demoMode = v
+                        }
+                }
+                .padding(.horizontal, 4)
+                .padding(.top, 4)
+
                 Spacer(minLength: 40)
             }
             .padding(.horizontal, 28)
@@ -149,6 +169,12 @@ struct LoginView: View {
     }
 
     private func submit() {
+        // Demo 模式：直接注入 mock 数据，跳过所有网络调用
+        if AppConfig.demoMode {
+            store.enterDemoMode()
+            return
+        }
+
         // 保存服务器地址
         let h = host.trimmingCharacters(in: .whitespaces)
         if !h.isEmpty { AppConfig.host = h }

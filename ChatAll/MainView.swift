@@ -18,54 +18,58 @@ struct MainView: View {
     @State private var remarkTarget: FriendItem? = nil
 
     private var tabTitle: String {
-        switch tab {
-        case 0: return "聊天"
-        case 1: return "群组"
-        default: return "我"
-        }
+        tab == 0 ? "会话" : "我"
     }
 
     var body: some View {
-        NavigationView {
-            VStack(spacing: 0) {
-                content
-            }
-            .navigationBarTitle(tabTitle, displayMode: .inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    connectionBadge
+        ZStack {
+            // 底图：所有页面共用同一张
+            ChatBackgroundImageView(url: store.backgroundURL)
+
+            NavigationView {
+                VStack(spacing: 0) {
+                    content
                 }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    pendingButton
+                .navigationBarTitle(tabTitle, displayMode: .inline)
+                .toolbarBackground(.hidden, for: .navigationBar)
+                .toolbarBackground(.hidden, for: .bottomBar)
+                .toolbarBackground(.automatic, for: .tabBar)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        connectionBadge
+                    }
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        pendingButton
+                    }
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        plusMenu
+                    }
                 }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    plusMenu
+                .overlay(alignment: .bottom) { bottomBar }
+                .overlay(alignment: .top) { toastView }
+            }
+            .navigationViewStyle(StackNavigationViewStyle())
+            .sheet(isPresented: $showSearch) { SearchUserSheet() }
+            .sheet(isPresented: $showCreateGroup) { CreateGroupSheet() }
+            .sheet(isPresented: $showPending) { PendingRequestsSheet() }
+            .sheet(item: $remarkTarget) { friend in
+                RemarkSheet(friend: friend)
+            }
+            .fullScreenCover(isPresented: $store.callUIVisible, onDismiss: {
+                // 下滑返回：来电中视为拒绝；通话中则收起为悬浮小窗/悬浮电话图标，不挂断
+                if store.call.state == .incoming {
+                    store.call.hangup()
+                } else if store.call.state != .idle {
+                    store.call.minimizeUI()
                 }
+            }) {
+                CallView(call: store.call)
             }
-            .overlay(alignment: .bottom) { bottomBar }
-            .overlay(alignment: .top) { toastView }
-        }
-        .navigationViewStyle(StackNavigationViewStyle())
-        .sheet(isPresented: $showSearch) { SearchUserSheet() }
-        .sheet(isPresented: $showCreateGroup) { CreateGroupSheet() }
-        .sheet(isPresented: $showPending) { PendingRequestsSheet() }
-        .sheet(item: $remarkTarget) { friend in
-            RemarkSheet(friend: friend)
-        }
-        .fullScreenCover(isPresented: $store.callUIVisible, onDismiss: {
-            // 下滑返回：来电中视为拒绝；通话中则收起为悬浮小窗/悬浮电话图标，不挂断
-            if store.call.state == .incoming {
-                store.call.hangup()
-            } else if store.call.state != .idle {
-                store.call.minimizeUI()
-            }
-        }) {
-            CallView(call: store.call)
-        }
-        .overlay {
-            // 收起后悬浮在页面上的通话小窗（视频）/电话图标（语音），点击恢复通话页
-            CallMiniOverlay(call: store.call) {
-                store.call.restoreUI()
+            .overlay {
+                // 收起后悬浮在页面上的通话小窗（视频）/电话图标（语音），点击恢复通话页
+                CallMiniOverlay(call: store.call) {
+                    store.call.restoreUI()
+                }
             }
         }
         .onChange(of: store.toastMessage) { value in
@@ -88,20 +92,14 @@ struct MainView: View {
     // MARK: - 左上角连接状态
 
     private var connectionBadge: some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(store.connectionState.color)
-                .frame(width: 7, height: 7)
-            Text(store.connectionState.title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(store.connectionState.color)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(store.connectionState.color.opacity(0.12))
-        .clipShape(Capsule())
-        .animation(.easeInOut(duration: 0.2), value: store.connectionState)
-        .accessibilityLabel("连接状态：\(store.connectionState.title)")
+        // 导航栏左上角空间有限，iOS 26/27 的玻璃按钮会把文字截断，
+        // 这里只用彩色圆点表示连接状态（绿=在线、黄=连接中、红=离线）。
+        Circle()
+            .fill(store.connectionState.color)
+            .frame(width: 10, height: 10)
+            .padding(6)
+            .animation(.easeInOut(duration: 0.2), value: store.connectionState)
+            .accessibilityLabel("连接状态：\(store.connectionState.title)")
     }
 
     // MARK: - 右上角铃铛（新的朋友）
@@ -153,81 +151,125 @@ struct MainView: View {
     @ViewBuilder
     private var content: some View {
         switch tab {
-        case 0: friendList
-        case 1: groupList
+        case 0: conversationList
         default: ProfileView().padding(.bottom, 56)
         }
     }
 
-    private var friendList: some View {
+    /// 会话行数据：朋友 / 群组统一展示，按最后消息时间倒序
+    private struct ConversationRow: Identifiable, Equatable {
+        let id: Int64                     // peerKey（朋友 id 或群组 id）
+        let isGroup: Bool
+        let name: String
+        let avatar: String
+        let online: Bool                  // 仅朋友有效
+        let subtitle: String              // 列表预览（群显示最新消息、友显示预览）
+        let lastCreatedAt: Date?          // 用于排序
+        let unread: Int
+    }
+
+    private var conversations: [ConversationRow] {
+        var rows: [ConversationRow] = []
+        for f in store.friends {
+            let peerId = f.id
+            let msgs = store.messages(for: peerId)
+            let lastDate = msgs.last.flatMap { AppConfig.parseDate($0.createdAt) }
+            let preview = store.lastPreviews[peerId] ?? ""
+            rows.append(ConversationRow(
+                id: peerId, isGroup: false,
+                name: f.displayName, avatar: f.avatar,
+                online: f.online,
+                subtitle: preview.isEmpty ? "暂无消息" : preview,
+                lastCreatedAt: lastDate,
+                unread: store.unread(peerId)
+            ))
+        }
+        for g in store.groups {
+            let peerId = g.id
+            let msgs = store.messages(for: peerId)
+            let lastDate = msgs.last.flatMap { AppConfig.parseDate($0.createdAt) }
+            let preview = store.lastPreviews[peerId] ?? ""
+            rows.append(ConversationRow(
+                id: peerId, isGroup: true,
+                name: g.displayName, avatar: g.avatar,
+                online: false,
+                subtitle: preview.isEmpty ? "\(g.memberCount) 人" : preview,
+                lastCreatedAt: lastDate,
+                unread: store.unread(peerId)
+            ))
+        }
+        // 按最后消息时间倒序（无消息的放最后）
+        rows.sort { lhs, rhs in
+            switch (lhs.lastCreatedAt, rhs.lastCreatedAt) {
+            case let (l?, r?): return l > r
+            case (nil, _): return false
+            case (_, nil): return true
+            }
+        }
+        return rows
+    }
+
+    private var conversationList: some View {
         List {
-            ForEach(store.friends) { friend in
-                NavigationLink(destination: ChatView(peerId: friend.id,
-                                                     isGroup: false,
-                                                     title: friend.displayName,
-                                                     avatar: friend.avatar)) {
+            ForEach(conversations) { row in
+                NavigationLink(destination: ChatView(peerId: row.id,
+                                                     isGroup: row.isGroup,
+                                                     title: row.name,
+                                                     avatar: row.avatar)) {
                     HStack(spacing: 12) {
                         ZStack(alignment: .bottomTrailing) {
-                            AvatarView(name: friend.displayName, avatar: friend.avatar, size: 44)
-                            if friend.online {
+                            AvatarView(name: row.name, avatar: row.avatar, size: 44)
+                            if !row.isGroup && row.online {
                                 Circle()
                                     .fill(Color.chatGreen)
                                     .frame(width: 10, height: 10)
-                                    .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 1.5))
+                                    .overlay(Circle().stroke(Color(.separator), lineWidth: 1.5))
                             }
                         }
-                        Text(friend.displayName)
-                            .font(.system(size: 16))
-                        Spacer()
-                        if store.unread(friend.id) > 0 {
-                            badge(store.unread(friend.id))
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(row.name)
+                                .font(.system(size: 16))
+                            Text(row.subtitle)
+                                .font(.system(size: 13))
+                                .foregroundColor(.gray)
+                                .lineLimit(1)
                         }
+                        Spacer()
+                        rightColumn(time: store.lastTimes[row.id], unread: row.unread)
                     }
                 }
                 .contextMenu {
-                    Button {
-                        remarkTarget = friend
-                    } label: {
-                        Label("设置备注", systemImage: "pencil")
-                    }
-                    Button(role: .destructive) {
-                        Task { await store.deleteFriend(friend.id) }
-                    } label: {
-                        Label("删除好友", systemImage: "trash")
+                    if !row.isGroup, let friend = store.friends.first(where: { $0.id == row.id }) {
+                        Button { remarkTarget = friend } label: {
+                            Label("设置备注", systemImage: "pencil")
+                        }
+                        Button(role: .destructive) {
+                            Task { await store.deleteFriend(friend.id) }
+                        } label: {
+                            Label("删除好友", systemImage: "trash")
+                        }
                     }
                 }
             }
         }
         .listStyle(PlainListStyle())
+        .liquidGlassList(opacity: store.backgroundOpacity)
         .padding(.bottom, 56)
     }
 
-    private var groupList: some View {
-        List {
-            ForEach(store.groups) { group in
-                NavigationLink(destination: ChatView(peerId: group.id,
-                                                     isGroup: true,
-                                                     title: group.displayName,
-                                                     avatar: group.avatar)) {
-                    HStack(spacing: 12) {
-                        AvatarView(name: group.displayName, avatar: group.avatar, size: 44)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(group.displayName)
-                                .font(.system(size: 16))
-                            Text("\(group.memberCount) 人")
-                                .font(.system(size: 12))
-                                .foregroundColor(.gray)
-                        }
-                        Spacer()
-                        if store.unread(group.id) > 0 {
-                            badge(store.unread(group.id))
-                        }
-                    }
-                }
+    /// 列表行右侧的「时间 + 未读数」列
+    @ViewBuilder
+    private func rightColumn(time: String?, unread: Int) -> some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            if let t = time, !t.isEmpty {
+                Text(t)
+                    .font(.system(size: 12))
+                    .foregroundColor(.gray)
+            }
+            if unread > 0 {
+                badge(unread)
             }
         }
-        .listStyle(PlainListStyle())
-        .padding(.bottom, 56)
     }
 
     private func badge(_ count: Int) -> some View {
@@ -244,24 +286,19 @@ struct MainView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 0) {
-            tabButton(index: 0, title: "聊天", icon: "message", badgeCount: totalFriendUnread)
-            tabButton(index: 1, title: "群组", icon: "person.3", badgeCount: totalGroupUnread)
-            tabButton(index: 2, title: "我", icon: "person", badgeCount: 0)
+            tabButton(index: 0, title: "会话", icon: "message", badgeCount: totalUnread)
+            tabButton(index: 1, title: "我", icon: "person", badgeCount: 0)
         }
         .padding(.top, 6)
         .padding(.bottom, 2)
-        .background(Color(.systemBackground))
+        .background(Rectangle().fill(.ultraThinMaterial))
         .overlay(alignment: .top) {
             Divider()
         }
     }
 
-    private var totalFriendUnread: Int {
-        store.friends.reduce(0) { $0 + store.unread($1.id) }
-    }
-
-    private var totalGroupUnread: Int {
-        store.groups.reduce(0) { $0 + store.unread($1.id) }
+    private var totalUnread: Int {
+        store.unreadCounts.values.reduce(0, +)
     }
 
     private func tabButton(index: Int, title: String, icon: String, badgeCount: Int) -> some View {
@@ -363,7 +400,9 @@ struct PendingRequestsSheet: View {
                 }
             }
             .listStyle(PlainListStyle())
+            .liquidGlassList(opacity: store.backgroundOpacity)
             .navigationBarTitle("新的朋友", displayMode: .inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("关闭") { presentationMode.wrappedValue.dismiss() }
@@ -419,6 +458,7 @@ struct SearchUserSheet: View {
                     }
                 }
                 .listStyle(PlainListStyle())
+                .liquidGlassList(opacity: store.backgroundOpacity)
 
                 HStack {
                     Text("验证消息")
@@ -430,6 +470,7 @@ struct SearchUserSheet: View {
                 .padding()
             }
             .navigationBarTitle("添加好友", displayMode: .inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("关闭") { presentationMode.wrappedValue.dismiss() }
@@ -493,8 +534,10 @@ struct CreateGroupSheet: View {
                     }
                 }
                 .listStyle(PlainListStyle())
+                .liquidGlassList(opacity: store.backgroundOpacity)
             }
             .navigationBarTitle("发起群聊", displayMode: .inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("取消") { presentationMode.wrappedValue.dismiss() }
@@ -545,7 +588,9 @@ struct RemarkSheet: View {
                         .foregroundColor(.gray)
                 }
             }
+            .liquidGlassList(opacity: store.backgroundOpacity)
             .navigationBarTitle("设置备注", displayMode: .inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("取消") { presentationMode.wrappedValue.dismiss() }

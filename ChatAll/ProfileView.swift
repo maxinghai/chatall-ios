@@ -2,10 +2,11 @@
 //  ProfileView.swift
 //  ChatAll
 //
-//  个人资料：改昵称、换头像（相册选图→上传）、改密码、Bark 推送绑定。
+//  个人资料：改昵称、换头像（相册选图→上传）、改密码、Bark 推送绑定、聊天背景。
 //
 
 import SwiftUI
+import PhotosUI
 
 struct ProfileView: View {
     @EnvironmentObject var store: AppStore
@@ -22,6 +23,12 @@ struct ProfileView: View {
     @State private var changingPwd = false
     @State private var savingBark = false
     @State private var cacheSizeText = ""
+
+    /// 聊天背景设置
+    @State private var bgPickerItem: PhotosPickerItem?
+    @State private var cropImage: UIImage?   // 待裁剪的原图
+    @State private var showCrop = false      // 是否显示裁剪页
+    @State private var bgOpacity: Double = AppConfig.backgroundOpacity
 
     var body: some View {
         Form {
@@ -72,6 +79,53 @@ struct ProfileView: View {
                     }
                 }
                 .disabled(changingPwd || oldPwd.isEmpty || newPwd.isEmpty)
+            }
+
+            // MARK: 聊天背景（本地，不上传）
+            Section(header: Text("聊天背景")) {
+                // 预览
+                HStack {
+                    Text("预览")
+                    Spacer()
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color(.secondarySystemBackground))
+                        .frame(width: 90, height: 140)
+                        .overlay {
+                            ChatBackgroundImageView(url: store.backgroundURL)
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(Color(.separator), lineWidth: 0.5)
+                                )
+                        }
+                }
+                .padding(.vertical, 2)
+
+                HStack {
+                    PhotosPicker(selection: $bgPickerItem,
+                                 matching: .images,
+                                 label: { Text("选择背景图") })
+                        .foregroundColor(.chatGreen)
+                    Spacer()
+                    if store.backgroundURL != nil {
+                        Button(role: .destructive) {
+                            store.clearBackgroundImage()
+                        } label: { Text("清除") }
+                    }
+                }
+
+                HStack {
+                    Text("玻璃透明度")
+                        .font(.system(size: 14))
+                    Spacer()
+                    Text(String(format: "%.0f%%", (1 - bgOpacity) * 100))
+                        .font(.system(size: 13))
+                        .foregroundColor(.gray)
+                }
+                Slider(value: $bgOpacity, in: 0.15...0.95, step: 0.05)
+                    .onChange(of: bgOpacity) { newValue in
+                        store.setBackgroundOpacity(newValue)
+                    }
             }
 
             // MARK: Bark 推送绑定
@@ -146,7 +200,9 @@ struct ProfileView: View {
                     .foregroundColor(.gray)
             }
         }
+        .liquidGlassList(opacity: store.backgroundOpacity)
         .navigationBarTitle("个人资料", displayMode: .inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .sheet(isPresented: $showPhoto) {
             PhotoPicker { images in
                 // 头像只需一张，取第一张
@@ -155,9 +211,35 @@ struct ProfileView: View {
                 }
             }
         }
+        .onChange(of: bgPickerItem) { item in
+            Task { @MainActor in
+                if let item,
+                   let data = try? await item.loadTransferable(type: Data.self),
+                   let image = UIImage(data: data) {
+                    // 选完图先进入裁剪，不直接保存
+                    cropImage = image
+                    showCrop = true
+                }
+            }
+        }
+        .fullScreenCover(isPresented: $showCrop) {
+            if let image = cropImage {
+                ImageCropView(image: image,
+                              onCancel: {
+                                  cropImage = nil
+                                  showCrop = false
+                              },
+                              onComplete: { cropped in
+                                  cropImage = nil
+                                  showCrop = false
+                                  store.setBackgroundImage(cropped)
+                              })
+            }
+        }
         .onAppear {
             nickname = store.currentUser?.nickname ?? ""
             avatar = store.currentUser?.avatar ?? ""
+            bgOpacity = store.backgroundOpacity
             refreshCacheSize()
             Task { @MainActor in
                 let saved = await store.loadBark()

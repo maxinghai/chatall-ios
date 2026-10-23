@@ -27,72 +27,102 @@ struct ChatView: View {
     @State private var shareItem: ShareItem? = nil
     @State private var sending = false
     @StateObject private var recorder = VoiceRecorder()
-    /// 输入框焦点（由 UIKit 输入框双向同步）：仅用于点击消息区时收键盘
     @State private var inputFocused = false
 
+    /// 每个图片 URL 对应气泡在屏幕上的 frame（用于展开过渡）
+    @State private var imageFrames: [URL: CGRect] = [:]
+
     var body: some View {
-        VStack(spacing: 0) {
-            messageArea
-            Divider()
-            inputBar
-        }
-        .navigationBarTitle(title, displayMode: .inline)
-        .toolbar {
-            // iOS 15 的 ToolbarContentBuilder 不支持 if（buildIf 需 iOS 16+），
-            // 条件判断必须放在 ToolbarItem 内部的 ViewBuilder 里。
-            ToolbarItem(placement: .navigationBarTrailing) {
-                if !isGroup {
-                    HStack(spacing: 16) {
-                        Button {
-                            store.call.startCall(peerId: peerId, mode: "AUDIO")
-                        } label: {
-                            Image(systemName: "phone")
-                        }
-                        Button {
-                            store.call.startCall(peerId: peerId, mode: "VIDEO")
-                        } label: {
-                            Image(systemName: "video")
+        ZStack {
+            VStack(spacing: 0) {
+                messageArea
+                Divider()
+                inputBar
+            }
+            .navigationBarTitle(title, displayMode: .inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbar {
+                // iOS 15 的 ToolbarContentBuilder 不支持 if（buildIf 需 iOS 16+），
+                // 条件判断必须放在 ToolbarItem 内部的 ViewBuilder 里。
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    if !isGroup {
+                        HStack(spacing: 16) {
+                            Button {
+                                store.call.startCall(peerId: peerId, mode: "AUDIO")
+                            } label: {
+                                Image(systemName: "phone")
+                            }
+                            Button {
+                                store.call.startCall(peerId: peerId, mode: "VIDEO")
+                            } label: {
+                                Image(systemName: "video")
+                            }
                         }
                     }
                 }
             }
-        }
-        .onAppear {
-            Task { @MainActor in
-                await store.openConversation(peerId: peerId, isGroup: isGroup)
+            .onAppear {
+                Task { @MainActor in
+                    await store.openConversation(peerId: peerId, isGroup: isGroup)
+                }
             }
-        }
-        .onDisappear {
-            store.closeConversation(peerId: peerId)
-            recorder.stopPlay()
-        }
-        .sheet(isPresented: $showPhotoPicker) {
-            PhotoPicker { images in
-                sendImages(images)
+            .onDisappear {
+                store.closeConversation(peerId: peerId)
+                recorder.stopPlay()
             }
-        }
-        .fileImporter(isPresented: $showFileImporter,
-                      allowedContentTypes: [.data],
-                      allowsMultipleSelection: false) { result in
-            handleFileImport(result)
-        }
-        .fullScreenCover(item: $previewItem) { item in
-            ImagePreviewView(urls: item.urls, currentIndex: item.index)
-        }
-        .sheet(item: $shareItem) { item in
-            ShareSheet(url: item.url)
-        }
-        .alert(isPresented: Binding(
-            get: { store.errorMessage != nil },
-            set: { if !$0 { store.errorMessage = nil } }
-        )) {
-            Alert(title: Text("提示"),
-                  message: Text(store.errorMessage ?? ""),
-                  dismissButton: .default(Text("知道了")))
+            .sheet(isPresented: $showPhotoPicker) {
+                PhotoPicker { images in
+                    sendImages(images)
+                }
+            }
+            .fileImporter(isPresented: $showFileImporter,
+                          allowedContentTypes: [.data],
+                          allowsMultipleSelection: false) { result in
+                handleFileImport(result)
+            }
+            .sheet(item: $shareItem) { item in
+                ShareSheet(url: item.url)
+            }
+            .alert(isPresented: Binding(
+                get: { store.errorMessage != nil },
+                set: { if !$0 { store.errorMessage = nil } }
+            )) {
+                Alert(title: Text("提示"),
+                      message: Text(store.errorMessage ?? ""),
+                      dismissButton: .default(Text("知道了")))
+            }
+
+            // 图片预览 overlay：自定义展开/关闭过渡动画
+            if let item = previewItem {
+                ImagePreviewView(urls: item.urls,
+                                 currentIndex: item.index,
+                                 sourceFrame: item.sourceFrame,
+                                 onDismiss: { previewItem = nil })
+            }
+
+            // 录音中 overlay：屏幕中间显示读秒 + 波形动画
+            if recorder.isRecording {
+                RecordingOverlayView(seconds: recorder.seconds, power: recorder.power)
+                    .transition(.opacity)
+            }
         }
     }
 
-    // MARK: - 消息列表
+    /// 预先计算每条消息是否需要显示时间分隔线
+    private func computeSeparatorFlags(messages: [ChatMessage]) -> [Bool] {
+        guard !messages.isEmpty else { return [] }
+        var flags = [Bool](repeating: false, count: messages.count)
+        flags[0] = true // 第一条始终显示
+        for i in 1..<messages.count {
+            flags[i] = AppConfig.shouldShowSeparator(
+                previous: messages[i - 1].createdAt,
+                current: messages[i].createdAt
+            )
+        }
+        return flags
+    }
+
+    // MARK: - 消息列表（续）
 
     private var messages: [ChatMessage] {
         store.messages(for: peerId)
@@ -103,15 +133,25 @@ struct ChatView: View {
     private let bottomAnchor = "chat_bottom_anchor"
 
     private var messageArea: some View {
-        ScrollViewReader { proxy in
+        // 预先算出每条消息是否需要显示时间分隔线（避免在 ViewBuilder 里写复杂 if 导致编译器超时）
+        let separatorFlags = computeSeparatorFlags(messages: messages)
+        let enumerated = Array(messages.enumerated())
+
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 14) {
-                    ForEach(messages) { msg in
+                    ForEach(enumerated, id: \.element.id) { idx, msg in
+                        if separatorFlags[idx] {
+                            timeSeparator(for: msg.createdAt, topPad: idx == 0 ? 4 : 6)
+                        }
                         MessageRow(message: msg,
                                    isSelf: msg.fromId == (store.currentUser?.id ?? 0),
                                    showSender: isGroup,
                                    senderName: senderName(msg),
                                    senderAvatar: senderAvatar(msg),
+                                   store: store,
+                                   peerId: peerId,
+                                   recordFrame: { url, frame in imageFrames[url] = frame },
                                    onTapImage: { url in openImagePreview(url: url) },
                                    onTapFile: { m in downloadAndShare(m) },
                                    onTapVoice: { m in playVoice(m) },
@@ -126,7 +166,9 @@ struct ChatView: View {
                 .padding(.bottom, 12)
                 .padding(.horizontal, 12)
             }
-            .background(Color(.systemGroupedBackground))
+            .background(
+                Rectangle().fill(.thinMaterial)
+            )
             .contentShape(Rectangle())
             .onTapGesture { inputFocused = false }
             .onChange(of: messages.count) { _ in
@@ -180,6 +222,21 @@ struct ChatView: View {
         return store.friends.first(where: { $0.id == msg.fromId })?.avatar ?? ""
     }
 
+    /// 时间分隔线（微信风格：居中灰色小圆角玻璃标签）
+    private func timeSeparator(for createdAt: String?, topPad: CGFloat = 4) -> some View {
+        let text = AppConfig.chatTimeString(createdAt)
+        let content = text.isEmpty ? AppConfig.listTimeString(createdAt) : text
+        return Text(content.isEmpty ? "—" : content)
+            .font(.system(size: 11))
+            .foregroundColor(.gray)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .padding(.top, topPad)
+            .background(Rectangle().fill(.ultraThinMaterial))
+            .cornerRadius(4)
+            .frame(maxWidth: .infinity)
+    }
+
     // MARK: - 输入栏
 
     private var inputBar: some View {
@@ -210,8 +267,12 @@ struct ChatView: View {
             ChatInputField(text: $inputText,
                            isFocused: $inputFocused,
                            onSend: sendText)
+<<<<<<< HEAD
                 .frame(maxWidth: .infinity)
                 .frame(height: 34)
+=======
+                .frame(maxWidth: .infinity, minHeight: 34, maxHeight: 34)
+>>>>>>> 746695ae677e39468ecbff04e5850aa80090f6b6
 
             if inputText.trimmingCharacters(in: .whitespaces).isEmpty {
                 // 按住录音
@@ -254,7 +315,7 @@ struct ChatView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color(.systemBackground))
+        .background(Rectangle().fill(.ultraThinMaterial))
     }
 
     // MARK: - 发送
@@ -417,10 +478,11 @@ struct ChatView: View {
             guard msg.contentType == "IMAGE" else { return nil }
             return AppConfig.fileURL(msg.fileUrl)
         }
+        let frame = imageFrames[url]
         if let idx = imageURLs.firstIndex(of: url) {
-            previewItem = PreviewItem(urls: imageURLs, index: idx)
+            previewItem = PreviewItem(urls: imageURLs, index: idx, sourceFrame: frame)
         } else {
-            previewItem = PreviewItem(urls: [url], index: 0)
+            previewItem = PreviewItem(urls: [url], index: 0, sourceFrame: frame)
         }
     }
 }
@@ -446,9 +508,13 @@ private struct ChatInputField: UIViewRepresentable {
         field.text = text
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+<<<<<<< HEAD
         // 垂直方向固定按内容高度，避免 SwiftUI 把输入框拉满剩余空间
         field.setContentHuggingPriority(.required, for: .vertical)
         field.setContentCompressionResistancePriority(.required, for: .vertical)
+=======
+        field.setContentHuggingPriority(.required, for: .vertical)
+>>>>>>> 746695ae677e39468ecbff04e5850aa80090f6b6
         field.addTarget(context.coordinator,
                         action: #selector(Coordinator.textChanged(_:)),
                         for: .editingChanged)
@@ -520,17 +586,46 @@ struct MessageRow: View {
     let showSender: Bool
     let senderName: String
     let senderAvatar: String
+    let store: AppStore
+    let peerId: Int64
+    let recordFrame: (URL, CGRect) -> Void
     let onTapImage: (URL) -> Void
     let onTapFile: (ChatMessage) -> Void
     let onTapVoice: (ChatMessage) -> Void
     let isPlaying: Bool
 
     var body: some View {
+        if message.recalled {
+            recalledMessage
+        } else {
+            normalRow
+        }
+    }
+
+    /// 撤回消息：居中灰色提示（微信风格）
+    private var recalledMessage: some View {
+        Text(isSelf ? "你撤回了一条消息" : "\(senderName) 撤回了一条消息")
+            .font(.system(size: 12))
+            .foregroundColor(.gray)
+            .frame(maxWidth: .infinity)
+            .contextMenu {
+                Button(role: .destructive) {
+                    store.deleteMessage(peerId: peerId, msgId: message.msgId)
+                } label: { Label("删除", systemImage: "trash") }
+            }
+    }
+
+    /// 普通消息行
+    private var normalRow: some View {
         HStack(alignment: .top, spacing: 8) {
             if isSelf {
                 Spacer(minLength: 40)
+                VStack(alignment: .trailing, spacing: 2) {
+                    bubble
+                        .contextMenu { contextMenuActions }
+                    readStatus
+                }
                 statusIndicator
-                bubble
                 AvatarView(name: senderName, avatar: senderAvatar, size: 32)
             } else {
                 AvatarView(name: senderName, avatar: senderAvatar, size: 32)
@@ -541,9 +636,41 @@ struct MessageRow: View {
                             .foregroundColor(.gray)
                     }
                     bubble
+                        .contextMenu { contextMenuActions }
                 }
                 Spacer(minLength: 40)
             }
+        }
+        .textSelection(.disabled)   // 整行禁用文本选择，彻底屏蔽英文系统 edit menu
+    }
+
+    /// 长按气泡弹出的菜单项（全部中文，覆盖系统英文菜单）
+    @ViewBuilder
+    private var contextMenuActions: some View {
+        // 文本消息 → 可复制
+        if message.contentType == "TEXT",
+           let content = message.content, !content.isEmpty {
+            Button {
+                UIPasteboard.general.string = content
+            } label: { Label("复制", systemImage: "doc.on.doc") }
+        }
+        if isSelf && store.canRecall(message) {
+            Button {
+                store.recallMessage(peerId: peerId, msgId: message.msgId)
+            } label: { Label("撤回", systemImage: "arrow.uturn.left") }
+        }
+        Button(role: .destructive) {
+            store.deleteMessage(peerId: peerId, msgId: message.msgId)
+        } label: { Label("删除", systemImage: "trash") }
+    }
+
+    /// 自己发的 ACK 消息下方显示"已读 / 未读"（仅单聊，群聊无意义）
+    @ViewBuilder
+    private var readStatus: some View {
+        if isSelf && message.localState == 1 && !showSender {
+            Text(message.readByPeer ? "已读" : "未读")
+                .font(.system(size: 10))
+                .foregroundColor(.gray)
         }
     }
 
@@ -560,16 +687,58 @@ struct MessageRow: View {
 
     @ViewBuilder
     private var bubble: some View {
-        switch message.contentType {
-        case "IMAGE":
-            imageBubble
-        case "FILE":
-            fileBubble
-        case "VOICE":
-            voiceBubble
-        default:
-            textBubble
+        if let call = callRecord {
+            callRecordBubble(call.isVideo, call.seconds)
+        } else {
+            switch message.contentType {
+            case "IMAGE":
+                imageBubble
+            case "FILE":
+                fileBubble
+            case "VOICE":
+                voiceBubble
+            default:
+                textBubble
+            }
         }
+    }
+
+    /// 通话记录（普通文本消息，内容形如 [[call:voice:83]]）
+    private var callRecord: (isVideo: Bool, seconds: Int)? {
+        guard message.contentType == "TEXT" else { return nil }
+        let text = (message.content ?? "").trimmingCharacters(in: .whitespaces)
+        guard text.hasPrefix("[[call:"), text.hasSuffix("]]") else { return nil }
+        let body = text.dropFirst("[[call:".count).dropLast(2)
+        let parts = body.split(separator: ":")
+        guard parts.count == 2,
+              parts[0] == "voice" || parts[0] == "video",
+              let seconds = Int(parts[1]) else { return nil }
+        return (parts[0] == "video", seconds)
+    }
+
+    /// 通话记录气泡：图标 + 语音/视频通话 + 时长
+    private func callRecordBubble(_ video: Bool, _ seconds: Int) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: video ? "video.fill" : "phone.fill")
+                .font(.system(size: 14))
+            Text((video ? "视频通话 " : "语音通话 ") + Self.durationText(seconds))
+                .font(.system(size: 15))
+        }
+        .foregroundColor(isSelf ? .white : .primary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(isSelf ? Color.chatGreen : Color.bubbleGray)
+        .cornerRadius(14)
+    }
+
+    private static func durationText(_ seconds: Int) -> String {
+        let h = seconds / 3600
+        let m = (seconds % 3600) / 60
+        let s = seconds % 60
+        if h > 0 {
+            return String(format: "%d:%02d:%02d", h, m, s)
+        }
+        return String(format: "%02d:%02d", m, s)
     }
 
     private var textBubble: some View {
@@ -580,6 +749,7 @@ struct MessageRow: View {
             .padding(.vertical, 9)
             .background(isSelf ? Color.chatGreen : Color.bubbleGray)
             .cornerRadius(14)
+            .textSelection(.disabled)   // 禁用系统英文选择菜单，统一用我们自己的 contextMenu
     }
 
     private var imageBubble: some View {
@@ -602,35 +772,47 @@ struct MessageRow: View {
         .frame(width: 160, height: 160)
         .clipped()
         .cornerRadius(10)
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear {
+                        if let url = AppConfig.fileURL(message.fileUrl) {
+                            let frame = geo.frame(in: .global)
+                            recordFrame(url, frame)
+                        }
+                    }
+                    .onChange(of: geo.frame(in: .global)) { new in
+                        if let url = AppConfig.fileURL(message.fileUrl) {
+                            recordFrame(url, new)
+                        }
+                    }
+            }
+        )
         .onTapGesture {
             if let url = AppConfig.fileURL(message.fileUrl) { onTapImage(url) }
         }
     }
 
     private var fileBubble: some View {
-        Button {
-            onTapFile(message)
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "doc.fill")
-                    .font(.system(size: 26))
-                    .foregroundColor(isSelf ? .white : .chatGreen)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(message.fileName ?? "文件")
-                        .font(.system(size: 14))
-                        .foregroundColor(isSelf ? .white : .primary)
-                        .lineLimit(1)
-                    Text(fileSizeText)
-                        .font(.system(size: 11))
-                        .foregroundColor(isSelf ? Color.white.opacity(0.8) : .gray)
-                }
+        HStack(spacing: 10) {
+            Image(systemName: "doc.fill")
+                .font(.system(size: 26))
+                .foregroundColor(isSelf ? .white : .chatGreen)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(message.fileName ?? "文件")
+                    .font(.system(size: 14))
+                    .foregroundColor(isSelf ? .white : .primary)
+                    .lineLimit(1)
+                Text(fileSizeText)
+                    .font(.system(size: 11))
+                    .foregroundColor(isSelf ? Color.white.opacity(0.8) : .gray)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(isSelf ? Color.chatGreen : Color.bubbleGray)
-            .cornerRadius(14)
         }
-        .buttonStyle(PlainButtonStyle())
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(isSelf ? Color.chatGreen : Color.bubbleGray)
+        .cornerRadius(14)
+        .onTapGesture { onTapFile(message) }
     }
 
     private var fileSizeText: String {
@@ -642,36 +824,33 @@ struct MessageRow: View {
     }
 
     private var voiceBubble: some View {
-        Button {
-            onTapVoice(message)
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 14))
-                    .foregroundColor(isSelf ? .white : .primary)
-                Image(systemName: "waveform")
-                    .font(.system(size: 16))
-                    .foregroundColor(isSelf ? .white : .chatGreen)
-                Text(AppConfig.durationText(message.duration))
-                    .font(.system(size: 13))
-                    .foregroundColor(isSelf ? .white : .primary)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(isSelf ? Color.chatGreen : Color.bubbleGray)
-            .cornerRadius(14)
+        HStack(spacing: 8) {
+            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                .font(.system(size: 14))
+                .foregroundColor(isSelf ? .white : .primary)
+            Image(systemName: "waveform")
+                .font(.system(size: 16))
+                .foregroundColor(isSelf ? .white : .chatGreen)
+            Text(AppConfig.durationText(message.duration))
+                .font(.system(size: 13))
+                .foregroundColor(isSelf ? .white : .primary)
         }
-        .buttonStyle(PlainButtonStyle())
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(isSelf ? Color.chatGreen : Color.bubbleGray)
+        .cornerRadius(14)
+        .onTapGesture { onTapVoice(message) }
     }
 }
 
 // MARK: - 辅助类型
 
-/// 图片预览项：所有图片 URL + 当前索引
+/// 图片预览项：所有图片 URL + 当前索引 + 源气泡 frame（用于展开过渡）
 struct PreviewItem: Identifiable {
     let id = UUID()
     let urls: [URL]
     let index: Int
+    let sourceFrame: CGRect?
 }
 
 /// 分享项
@@ -736,5 +915,95 @@ struct PhotoPicker: UIViewControllerRepresentable {
                 if !picked.isEmpty { self.parent.onPick(picked) }
             }
         }
+    }
+}
+
+// MARK: - 录音中全屏提示
+
+/// 长按录音时屏幕中间的覆盖层：麦克风图标 + 读秒 + 波形条 + 底部提示
+private struct RecordingOverlayView: View {
+    let seconds: Int
+    let power: Float
+
+    /// 6 根波形条，颜色从左到右渐变
+    private let barCount = 6
+    private let barColors: [Color] = [
+        Color.red.opacity(0.9), Color.orange.opacity(0.9),
+        Color.yellow.opacity(0.9), Color.green.opacity(0.9),
+        Color.blue.opacity(0.9), Color.purple.opacity(0.9)
+    ]
+
+    // 为每根条一个"相位"，让波形自然抖动
+    @State private var phases: [CGFloat] = (0..<6).map { _ in CGFloat.random(in: 0...1) }
+
+    var body: some View {
+        ZStack {
+            // 半透明背景遮罩
+            Color.black.opacity(0.25)
+                .ignoresSafeArea()
+
+            // 中间卡片
+            VStack(spacing: 18) {
+                // 麦克风 icon + 外圈脉冲
+                ZStack {
+                    Circle()
+                        .fill(Color.red.opacity(0.15 + Double(power) * 0.4))
+                        .frame(width: 96, height: 96)
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 42, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(width: 72, height: 72)
+                        .background(Circle().fill(Color.red))
+                }
+
+                // 读秒
+                Text(String(format: "%02d:%02d", seconds / 60, seconds % 60))
+                    .font(.system(size: 34, weight: .bold, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundColor(.white)
+
+                // 波形条
+                HStack(alignment: .center, spacing: 4) {
+                    ForEach(0..<barCount, id: \.self) { i in
+                        bar(index: i)
+                    }
+                }
+                .frame(height: 40)
+                .padding(.horizontal, 8)
+
+                // 底部提示
+                Text("松开发送")
+                    .font(.system(size: 14))
+                    .foregroundColor(.white.opacity(0.85))
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 8)
+                    .background(Capsule().fill(Color.white.opacity(0.18)))
+            }
+            .padding(.horizontal, 40)
+            .padding(.vertical, 36)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(Color.black.opacity(0.78))
+            )
+            .shadow(color: .black.opacity(0.4), radius: 18, x: 0, y: 8)
+            .onAppear { tickPhase() }
+            .onChange(of: power) { _ in tickPhase() }
+        }
+    }
+
+    private func bar(index: Int) -> some View {
+        // 基础高度由 power 决定，再叠加该条自己的相位抖动，让波形有"律动"
+        let base = CGFloat(power) * 34 + 4
+        let jitter = phases[index] * CGFloat(power) * 14
+        let h = min(40, max(4, base + jitter))
+        return RoundedRectangle(cornerRadius: 2)
+            .fill(barColors[index])
+            .frame(width: 5, height: h)
+            .animation(.linear(duration: 0.12), value: h)
+    }
+
+    private func tickPhase() {
+        // 每次 tick 让 6 根条各自一个新的随机相位
+        phases = phases.map { _ in CGFloat.random(in: 0...1) }
     }
 }

@@ -48,10 +48,53 @@ final class AppStore: ObservableObject {
     @Published var unreadCounts: [Int64: Int] = [:]
     /// 当前打开的会话（peerKey）
     @Published var activePeerId: Int64? = nil
+    /// peerKey -> 最新一条消息的列表页预览文案
+    @Published var lastPreviews: [Int64: String] = [:]
+    /// peerKey -> 最新一条消息的时间串（已按微信列表规则格式化）
+    @Published var lastTimes: [Int64: String] = [:]
+    /// peerKey -> 最后一次打开该会话的时间（用于本地已读推断）
+    private var lastOpenedAt: [Int64: Date] = [:]
 
     // MARK: - 提示
     @Published var errorMessage: String? = nil
     @Published var toastMessage: String? = nil
+
+    // MARK: - 聊天背景（本地）
+    /// 当前背景图 URL（nil = 未设置）。所有页面订阅它来重绘底图。
+    @Published var backgroundURL: URL? = AppConfig.backgroundImageURL
+    /// 玻璃叠加层不透明度（0.3~1.0）
+    @Published var backgroundOpacity: Double = AppConfig.backgroundOpacity
+
+    /// 应用新背景：保存到磁盘 + 广播给所有页面
+    func setBackgroundImage(_ image: UIImage?) {
+        guard let image else {
+            AppConfig.clearBackground()
+            _bgImageCache.removeAllObjects()
+            backgroundURL = nil
+            return
+        }
+        if AppConfig.saveBackgroundImage(image) {
+            // 保存的是同一个 bg.jpg 路径，URL 不变，需要清缓存 + 强制刷新
+            _bgImageCache.removeAllObjects()
+            let url = AppConfig.backgroundImageURL
+            backgroundURL = nil
+            objectWillChange.send()
+            backgroundURL = url
+        } else {
+            errorMessage = "背景图保存失败"
+        }
+    }
+
+    func clearBackgroundImage() {
+        AppConfig.clearBackground()
+        _bgImageCache.removeAllObjects()
+        backgroundURL = nil
+    }
+
+    func setBackgroundOpacity(_ value: Double) {
+        AppConfig.backgroundOpacity = value
+        backgroundOpacity = value
+    }
 
     // MARK: - 其它
     let ws = WsClient()
@@ -155,9 +198,102 @@ final class AppStore: ObservableObject {
         messagesByPeer = [:]
         unreadCounts = [:]
         activePeerId = nil
+        lastPreviews = [:]
+        lastTimes = [:]
+        lastOpenedAt = [:]
         historyLoadedPeers.removeAll()
         // 清空本地消息存储
         MessageStore.clearAll()
+    }
+
+    // MARK: - Demo 模式（仅本地展示，不联网）
+
+    /// 进入 Demo 模式：跳过所有网络请求，直接注入 mock 数据
+    func enterDemoMode() {
+        AppConfig.demoMode = true
+        let now = Date()
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "zh_CN")
+        df.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        let iso = { (offsetSec: TimeInterval) -> String in
+            df.string(from: now.addingTimeInterval(-offsetSec))
+        }
+
+        var me = UserInfo()
+        me.id = 1001; me.username = "demo"; me.nickname = "演示用户"
+        currentUser = me
+        token = "demo"
+        isLoggedIn = true
+        connectionState = .online
+
+        // Mock 好友（自定义 init()，属性逐个赋值）
+        var a = FriendItem(); a.id = 2001; a.username = "alice"; a.nickname = "爱丽丝"; a.remark = "好朋友"; a.online = true
+        var b = FriendItem(); b.id = 2002; b.username = "bob"; b.nickname = "鲍勃"; b.online = false
+        var c = FriendItem(); c.id = 2003; c.username = "carol"; c.nickname = "卡罗尔"; c.remark = "同事"; c.online = true
+        var d = FriendItem(); d.id = 2004; d.username = "david"; d.nickname = "大卫"; d.online = false
+        friends = [a, b, c, d]
+
+        // Mock 群组
+        var g1 = GroupItem(); g1.id = 3001; g1.name = "项目开发组"; g1.ownerId = 1001; g1.memberCount = 8
+        var g2 = GroupItem(); g2.id = 3002; g2.name = "周末聚餐"; g2.ownerId = 2001; g2.memberCount = 12
+        groups = [g1, g2]
+
+        // Mock 消息
+        messagesByPeer = [:]
+        messagesByPeer[2001] = [
+            demoMsg(id: 1, fromId: 2001, peerId: 2001, contentType: "TEXT", content: "明天一起吃饭？", createdAt: iso(120)),
+            demoMsg(id: 2, fromId: 1001, peerId: 2001, contentType: "TEXT", content: "好啊，几点？", createdAt: iso(60)),
+        ]
+        messagesByPeer[2002] = [
+            demoMsg(id: 3, fromId: 2002, peerId: 2002, contentType: "IMAGE", content: "", createdAt: iso(3600)),
+        ]
+        messagesByPeer[2003] = [
+            demoMsg(id: 4, fromId: 2003, peerId: 2003, contentType: "TEXT", content: "下午的会议改到 3 点了", createdAt: iso(7200)),
+        ]
+        messagesByPeer[2004] = [
+            demoMsg(id: 5, fromId: 2004, peerId: 2004, contentType: "VOICE", content: "", duration: 8, createdAt: iso(86400)),
+        ]
+        messagesByPeer[3001] = [
+            demoMsg(id: 6, fromId: 2001, peerId: 3001, groupId: 3001, contentType: "TEXT", content: "大家今天辛苦了！", createdAt: iso(1800)),
+            demoMsg(id: 7, fromId: 2002, peerId: 3001, groupId: 3001, contentType: "TEXT", content: "数据跑通了，发一下报告", createdAt: iso(900)),
+        ]
+        messagesByPeer[3002] = [
+            demoMsg(id: 8, fromId: 2003, peerId: 3002, groupId: 3002, contentType: "FILE", content: "", fileName: "聚餐计划.pdf", createdAt: iso(43200)),
+        ]
+
+        unreadCounts = [2001: 2, 2003: 1, 3001: 1]
+        reloadLastInfo()
+    }
+
+    /// 构造一条 demo 消息
+    private func demoMsg(id: Int64, fromId: Int64, peerId: Int64,
+                         groupId: Int64? = nil,
+                         contentType: String,
+                         content: String,
+                         fileName: String? = nil,
+                         duration: Int? = nil,
+                         createdAt: String) -> ChatMessage {
+        var m = ChatMessage()
+        m.id = id
+        m.msgId = "demo_\(id)"
+        m.fromId = fromId
+        m.toId = groupId == nil ? peerId : nil
+        m.groupId = groupId
+        m.chatType = groupId == nil ? 1 : 2
+        m.contentType = contentType
+        m.content = content
+        m.fileName = fileName
+        m.duration = duration
+        m.status = 1
+        m.localState = 1
+        m.createdAt = createdAt
+        return m
+    }
+
+    /// 退出 Demo 模式
+    func exitDemoMode() {
+        AppConfig.demoMode = false
+        logout()
     }
 
     func connectWS() {
@@ -179,6 +315,44 @@ final class AppStore: ObservableObject {
         await refreshGroups()
         await refreshPending()
         await loadOffline()
+        reloadLastInfo()
+    }
+
+    /// 刷新列表页的最新消息预览 + 时间（未加载过的会话从本地磁盘读取，冷启动也能显示）
+    func reloadLastInfo() {
+        var previews: [Int64: String] = [:]
+        var times: [Int64: String] = [:]
+        for f in friends {
+            if let last = lastMessage(f.id) {
+                let p = previewText(last)
+                if !p.isEmpty { previews[f.id] = p }
+                let t = AppConfig.listTimeString(last.createdAt)
+                if !t.isEmpty { times[f.id] = t }
+            }
+        }
+        for g in groups {
+            if let last = lastMessage(g.id) {
+                let p = previewText(last)
+                if !p.isEmpty { previews[g.id] = p }
+                let t = AppConfig.listTimeString(last.createdAt)
+                if !t.isEmpty { times[g.id] = t }
+            }
+        }
+        lastPreviews = previews
+        lastTimes = times
+    }
+
+    private func lastMessage(_ peerId: Int64) -> ChatMessage? {
+        let list = messagesByPeer[peerId] ?? MessageStore.load(peerId: peerId)
+        return list.last
+    }
+
+    /// 统一更新某个会话的最新预览 + 时间
+    private func updateLastInfo(_ peerId: Int64, with msg: ChatMessage) {
+        let p = previewText(msg)
+        if !p.isEmpty { lastPreviews[peerId] = p }
+        let t = AppConfig.listTimeString(msg.createdAt)
+        if !t.isEmpty { lastTimes[peerId] = t }
     }
 
     func refreshFriends() async {
@@ -229,11 +403,16 @@ final class AppStore: ObservableObject {
     func openConversation(peerId: Int64, isGroup: Bool) async {
         activePeerId = peerId
         unreadCounts[peerId] = 0
+        lastOpenedAt[peerId] = Date()
 
         // 本地优先：先从磁盘加载历史消息，瞬间渲染，避免空白等待网络
         if messagesByPeer[peerId] == nil {
-            messagesByPeer[peerId] = MessageStore.load(peerId: peerId)
+            let local = MessageStore.load(peerId: peerId)
+            messagesByPeer[peerId] = local
+            if let last = local.last { updateLastInfo(peerId, with: last) }
         }
+        // 打开会话时，把自己发的已发送消息全部标记为已读（本地推断：会话打开 = 对方已看过之前的消息）
+        markOwnMessagesRead(peerId: peerId)
 
         // 后台拉网络刷新；同一会话本生命周期内只拉一次
         guard !historyLoadedPeers.contains(peerId) else { return }
@@ -251,7 +430,10 @@ final class AppStore: ObservableObject {
                 merged.append(p)
             }
             messagesByPeer[peerId] = merged
+            if let last = merged.last { updateLastInfo(peerId, with: last) }
             historyLoadedPeers.insert(peerId)
+            // 网络合并后再标记一次，确保从服务器拉下来的自己的历史消息也带上已读状态
+            markOwnMessagesRead(peerId: peerId)
             // 回写本地，下次冷启动直接显示
             MessageStore.save(peerId: peerId, messages: merged)
         } catch {
@@ -277,6 +459,7 @@ final class AppStore: ObservableObject {
         if list.contains(where: { $0.msgId == msg.msgId && !$0.msgId.isEmpty }) { return }
         list.append(msg)
         messagesByPeer[key] = list
+        updateLastInfo(key, with: msg)
         // 持久化到本地
         MessageStore.save(peerId: key, messages: list)
 
@@ -290,6 +473,10 @@ final class AppStore: ObservableObject {
     }
 
     private func previewText(_ msg: ChatMessage) -> String {
+        if msg.recalled {
+            // 对方撤回的消息：列表预览不显示，避免干扰
+            return ""
+        }
         switch msg.contentType {
         case "IMAGE": return "[图片]"
         case "FILE": return "[文件]"
@@ -340,6 +527,7 @@ final class AppStore: ObservableObject {
         var list = messagesByPeer[peerId] ?? []
         list.append(msg)
         messagesByPeer[peerId] = list
+        updateLastInfo(peerId, with: msg)
         // 持久化到本地（发送中态也保存，冷启动后仍显示）
         MessageStore.save(peerId: peerId, messages: list)
 
@@ -464,6 +652,8 @@ final class AppStore: ObservableObject {
             friends.removeAll(where: { $0.id == friendId })
             messagesByPeer[friendId] = nil
             unreadCounts[friendId] = nil
+            lastPreviews[friendId] = nil
+            lastTimes[friendId] = nil
             historyLoadedPeers.remove(friendId)
             // 同步删除本地消息文件
             MessageStore.remove(peerId: friendId)
@@ -551,4 +741,159 @@ final class AppStore: ObservableObject {
     }
 
     func currentUserName() -> String { currentUser?.displayName ?? "我" }
+
+    // MARK: - 本地消息操作（撤回 / 删除 / 已读推断）
+
+    /// 是否还在可撤回窗口（微信默认 2 分钟）
+    static let recallWindowSeconds: TimeInterval = 120
+
+    /// 判断一条消息是否还能撤回：必须是自己发的、已发出去（ACK）、2 分钟内、未被撤回过
+    func canRecall(_ msg: ChatMessage) -> Bool {
+        guard msg.fromId == (currentUser?.id ?? 0) else { return false }
+        guard msg.localState != 0 else { return false }
+        guard !msg.recalled else { return false }
+        guard let date = AppConfig.parseDate(msg.createdAt) else { return true } // 时间缺失放宽限制
+        return Date().timeIntervalSince(date) <= Self.recallWindowSeconds
+    }
+
+    /// 撤回消息（仅本地生效，对方仍能收到原消息）
+    func recallMessage(peerId: Int64, msgId: String) {
+        guard var list = messagesByPeer[peerId],
+              let idx = list.firstIndex(where: { $0.msgId == msgId }) else { return }
+        let msg = list[idx]
+        guard canRecall(msg) else {
+            toastMessage = "消息已超过 2 分钟，无法撤回"
+            return
+        }
+        list[idx].recalled = true
+        messagesByPeer[peerId] = list
+        MessageStore.save(peerId: peerId, messages: list)
+
+        // 撤回后重新计算列表页预览：跳过被撤回的消息，找最后一条"非撤回"的消息作预览
+        rebuildLastInfo(peerId: peerId, from: list)
+        toastMessage = "你撤回了一条消息"
+    }
+
+    /// 根据消息列表重建某个会话的列表页预览 + 时间（自动跳过 recalled）
+    private func rebuildLastInfo(peerId: Int64, from list: [ChatMessage]) {
+        guard let lastVisible = list.last(where: { !$0.recalled }) else {
+            lastPreviews.removeValue(forKey: peerId)
+            lastTimes.removeValue(forKey: peerId)
+            return
+        }
+        lastPreviews[peerId] = previewText(lastVisible)
+        lastTimes[peerId] = AppConfig.listTimeString(lastVisible.createdAt)
+    }
+
+    /// 删除消息（仅本地删除，数据库不受影响；用户明确说不改后端）
+    func deleteMessage(peerId: Int64, msgId: String) {
+        guard var list = messagesByPeer[peerId],
+              let idx = list.firstIndex(where: { $0.msgId == msgId }) else { return }
+        list.remove(at: idx)
+        messagesByPeer[peerId] = list
+        MessageStore.save(peerId: peerId, messages: list)
+        if let last = list.last {
+            updateLastInfo(peerId, with: last)
+        } else {
+            lastPreviews.removeValue(forKey: peerId)
+            lastTimes.removeValue(forKey: peerId)
+        }
+    }
+
+    /// 本地推断：把该会话中自己发的所有 ACK 消息标记为"对方已读"
+    func markOwnMessagesRead(peerId: Int64) {
+        guard var list = messagesByPeer[peerId], !list.isEmpty else { return }
+        let myId = currentUser?.id ?? 0
+        var changed = false
+        for i in list.indices {
+            if list[i].fromId == myId && list[i].localState == 1 && !list[i].readByPeer {
+                list[i].readByPeer = true
+                changed = true
+            }
+        }
+        if changed {
+            messagesByPeer[peerId] = list
+            MessageStore.save(peerId: peerId, messages: list)
+        }
+    }
+
+    /// 查看本地打开会话的时间（供 ChatView 判断"我的消息是否被对方已读"）
+    func openedAt(for peerId: Int64) -> Date? { lastOpenedAt[peerId] }
+}
+
+// MARK: - 液态玻璃背景（跨页面共用）
+
+/// 背景图缓存：避免每次视图刷新都从磁盘 UIImage(contentsOfFile:)
+private var _bgImageCache: NSCache<NSURL, UIImage> = {
+    let c = NSCache<NSURL, UIImage>()
+    c.countLimit = 3
+    return c
+}()
+
+/// 全页背景：若用户设置了背景图，底层放一张填满屏幕的 Image
+struct ChatBackgroundImageView: View {
+    let url: URL?
+    var body: some View {
+        if let url, let image = loadImage(url) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .ignoresSafeArea()
+                .transition(.opacity)
+        }
+    }
+
+    /// 带缓存的图片加载：同一 URL 只从磁盘读一次
+    private func loadImage(_ url: URL) -> UIImage? {
+        if let cached = _bgImageCache.object(forKey: url as NSURL) {
+            return cached
+        }
+        guard let img = UIImage(contentsOfFile: url.path) else { return nil }
+        _bgImageCache.setObject(img, forKey: url as NSURL)
+        return img
+    }
+}
+
+/// 液态玻璃叠加层：Material + 系统底色的混合，支持透明度调节
+/// - iOS 16+ 用 .ultraThinMaterial / .thinMaterial，不支持 Liquid Glass API
+/// - iOS 26+ 可在外部用 .glassEffect 装饰本组件
+struct LiquidGlassOverlay: View {
+    let opacity: Double
+    var body: some View {
+        ZStack {
+            Rectangle().fill(.ultraThinMaterial)
+            Color(.systemBackground)
+                .opacity(opacity)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// 把 List/Form 变成"透明底色 + 玻璃材质"的修饰器
+/// 用法：list.liquidGlassList(opacity: store.backgroundOpacity)
+/// opacity 越高 = 叠加的不透明涂层越厚 = 背景图越不容易透出来
+struct LiquidGlassListModifier: ViewModifier {
+    let opacity: Double
+    func body(content: Content) -> some View {
+        content
+            .scrollContentBackground(.hidden)     // 隐藏 List 默认的整块白底
+            .listRowBackground(Color.clear)       // 隐藏每一行自己的白底（关键！）
+            .background(glassOverlay(opacity: opacity))
+    }
+
+    @ViewBuilder
+    private func glassOverlay(opacity: Double) -> some View {
+        // Material 本身就是玻璃模糊，后面叠一个可调不透明度的同色涂层
+        ZStack {
+            Rectangle().fill(.ultraThinMaterial)
+            // opacity 默认 0.55 比较通透；用户滑块范围 0.15~0.95
+            Color(.systemBackground).opacity(opacity * 0.6)
+        }
+    }
+}
+
+extension View {
+    func liquidGlassList(opacity: Double) -> some View {
+        modifier(LiquidGlassListModifier(opacity: opacity))
+    }
 }

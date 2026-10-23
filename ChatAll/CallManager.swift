@@ -60,6 +60,8 @@ final class CallManager: NSObject, ObservableObject {
     private var isCaller = false
     private var isAccepted = false
     private var usingFrontCamera = true
+    /// 通话接通的时刻，未接通为 nil（用于结束时统计通话时长）
+    private var activeSince: Date?
 
     private var hasRemoteDescription = false
     private var pendingCandidates: [RTCIceCandidate] = []
@@ -155,6 +157,7 @@ final class CallManager: NSObject, ObservableObject {
         self.isVideo = (mode == "VIDEO")
         self.isCaller = true
         self.isAccepted = false
+        self.activeSince = nil
         self.peerName = store?.friendName(peerId) ?? "对方"
         self.statusText = "正在呼叫…"
 
@@ -176,6 +179,7 @@ final class CallManager: NSObject, ObservableObject {
         configureAudioSession()
         self.isAccepted = true
         self.state = .active
+        if activeSince == nil { activeSince = Date() }
         self.statusText = "已接通"
         sendSignal(action: "ACCEPT", payload: nil)
         // 语音通话接通后进入灵动岛 / 锁屏实时活动
@@ -205,6 +209,7 @@ final class CallManager: NSObject, ObservableObject {
             self.isVideo = (incomingMode == "VIDEO")
             self.isCaller = false
             self.isAccepted = false
+            self.activeSince = nil
             self.peerName = store?.friendName(fromId) ?? "来电"
             self.statusText = self.isVideo ? "视频通话邀请" : "语音通话邀请"
             self.state = .incoming
@@ -215,6 +220,7 @@ final class CallManager: NSObject, ObservableObject {
             isAccepted = true
             statusText = "已接通"
             state = .active
+            if activeSince == nil { activeSince = Date() }
             // 语音通话接通后进入灵动岛 / 锁屏实时活动
             syncLiveActivity()
             // 主叫收到 ACCEPT 后创建 offer
@@ -328,7 +334,18 @@ final class CallManager: NSObject, ObservableObject {
         pendingCandidates.removeAll()
     }
 
+    /// 主叫在通话接通后写一条通话记录消息：[[call:voice|video:秒数]]
+    private func recordCallIfNeeded() {
+        guard isCaller, let started = activeSince, peerId != 0 else { return }
+        activeSince = nil
+        let seconds = max(1, Int(Date().timeIntervalSince(started).rounded()))
+        let content = "[[call:\(isVideo ? "video" : "voice"):\(seconds)]]"
+        store?.sendMessage(to: peerId, isGroup: false, contentType: "TEXT", content: content)
+    }
+
     private func teardown() {
+        // 先写通话记录（内部依赖 peerId / isCaller，需在状态清空前调用）
+        recordCallIfNeeded()
         // 先关闭灵动岛实时活动，再清理通话状态
         CallLiveActivityController.shared.end()
         teardownConnection()
@@ -341,6 +358,7 @@ final class CallManager: NSObject, ObservableObject {
         speakerOn = true
         isCaller = false
         isAccepted = false
+        activeSince = nil
         callId = ""
         peerId = 0
         try? RTCAudioSession.sharedInstance().setActive(false)

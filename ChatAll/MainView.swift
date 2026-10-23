@@ -170,8 +170,16 @@ struct MainView: View {
                                     .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 1.5))
                             }
                         }
-                        Text(friend.displayName)
-                            .font(.system(size: 16))
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(friend.displayName)
+                                .font(.system(size: 16))
+                            if let preview = store.lastPreviews[friend.id], !preview.isEmpty {
+                                Text(preview)
+                                    .font(.system(size: 13))
+                                    .foregroundColor(.gray)
+                                    .lineLimit(1)
+                            }
+                        }
                         Spacer()
                         if store.unread(friend.id) > 0 {
                             badge(store.unread(friend.id))

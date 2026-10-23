@@ -48,6 +48,8 @@ final class AppStore: ObservableObject {
     @Published var unreadCounts: [Int64: Int] = [:]
     /// 当前打开的会话（peerKey）
     @Published var activePeerId: Int64? = nil
+    /// peerKey -> 最新一条消息的列表页预览文案
+    @Published var lastPreviews: [Int64: String] = [:]
 
     // MARK: - 提示
     @Published var errorMessage: String? = nil
@@ -155,6 +157,7 @@ final class AppStore: ObservableObject {
         messagesByPeer = [:]
         unreadCounts = [:]
         activePeerId = nil
+        lastPreviews = [:]
         historyLoadedPeers.removeAll()
         // 清空本地消息存储
         MessageStore.clearAll()
@@ -179,6 +182,25 @@ final class AppStore: ObservableObject {
         await refreshGroups()
         await refreshPending()
         await loadOffline()
+        reloadLastPreviews()
+    }
+
+    /// 刷新列表页的"最新一条消息"预览（未加载过的会话从本地磁盘读取，冷启动也能显示）
+    func reloadLastPreviews() {
+        var map: [Int64: String] = [:]
+        for f in friends {
+            if let text = lastPreviewText(f.id) { map[f.id] = text }
+        }
+        for g in groups {
+            if let text = lastPreviewText(g.id) { map[g.id] = text }
+        }
+        lastPreviews = map
+    }
+
+    private func lastPreviewText(_ peerId: Int64) -> String? {
+        let list = messagesByPeer[peerId] ?? MessageStore.load(peerId: peerId)
+        guard let last = list.last else { return nil }
+        return previewText(last)
     }
 
     func refreshFriends() async {
@@ -232,7 +254,9 @@ final class AppStore: ObservableObject {
 
         // 本地优先：先从磁盘加载历史消息，瞬间渲染，避免空白等待网络
         if messagesByPeer[peerId] == nil {
-            messagesByPeer[peerId] = MessageStore.load(peerId: peerId)
+            let local = MessageStore.load(peerId: peerId)
+            messagesByPeer[peerId] = local
+            if let last = local.last { lastPreviews[peerId] = previewText(last) }
         }
 
         // 后台拉网络刷新；同一会话本生命周期内只拉一次
@@ -251,6 +275,7 @@ final class AppStore: ObservableObject {
                 merged.append(p)
             }
             messagesByPeer[peerId] = merged
+            if let last = merged.last { lastPreviews[peerId] = previewText(last) }
             historyLoadedPeers.insert(peerId)
             // 回写本地，下次冷启动直接显示
             MessageStore.save(peerId: peerId, messages: merged)
@@ -277,6 +302,7 @@ final class AppStore: ObservableObject {
         if list.contains(where: { $0.msgId == msg.msgId && !$0.msgId.isEmpty }) { return }
         list.append(msg)
         messagesByPeer[key] = list
+        lastPreviews[key] = previewText(msg)
         // 持久化到本地
         MessageStore.save(peerId: key, messages: list)
 
@@ -340,6 +366,7 @@ final class AppStore: ObservableObject {
         var list = messagesByPeer[peerId] ?? []
         list.append(msg)
         messagesByPeer[peerId] = list
+        lastPreviews[peerId] = previewText(msg)
         // 持久化到本地（发送中态也保存，冷启动后仍显示）
         MessageStore.save(peerId: peerId, messages: list)
 
@@ -464,6 +491,7 @@ final class AppStore: ObservableObject {
             friends.removeAll(where: { $0.id == friendId })
             messagesByPeer[friendId] = nil
             unreadCounts[friendId] = nil
+            lastPreviews[friendId] = nil
             historyLoadedPeers.remove(friendId)
             // 同步删除本地消息文件
             MessageStore.remove(peerId: friendId)

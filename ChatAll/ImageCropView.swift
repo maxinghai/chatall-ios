@@ -28,8 +28,9 @@ struct ImageCropView: View {
         self.displayImage = ImageCropView.downscale(image, maxEdge: 2000)
         self.onCancel = onCancel
         self.onComplete = onComplete
-        let iw = self.displayImage.size.width
-        let ih = self.displayImage.size.height
+        // 防止零尺寸图片导致除零 → NaN 帧 → 白屏
+        let iw = max(self.displayImage.size.width, 1)
+        let ih = max(self.displayImage.size.height, 1)
         let sw = UIScreen.main.bounds.width
         let sh = UIScreen.main.bounds.height
         self.baseScale = max(sw / iw, sh / ih)
@@ -38,15 +39,18 @@ struct ImageCropView: View {
     }
 
     var body: some View {
+        // 兜底：防止 scale 因异常手势值变成 NaN/inf 导致帧尺寸非法而白屏
+        let displayScale: CGFloat = scale.isFinite && scale > 0 ? scale : baseScale
+        let imgW = max(displayImage.size.width, 1) * displayScale
+        let imgH = max(displayImage.size.height, 1) * displayScale
+
         ZStack {
             Color.black.ignoresSafeArea()
 
             Image(uiImage: displayImage)
                 .resizable()
-                .frame(width: displayImage.size.width * scale,
-                       height: displayImage.size.height * scale)
+                .frame(width: imgW, height: imgH)
                 .offset(translation)
-                .clipped()
         }
         .ignoresSafeArea()
         .gesture(
@@ -71,8 +75,8 @@ struct ImageCropView: View {
                     }
             )
         )
-        // 底部按钮栏用 safeAreaInset，保证在安全区内、不被 Home indicator 遮挡
-        .safeAreaInset(edge: .bottom) {
+        // 底部按钮栏：用 overlay 固定在底部，避免 safeAreaInset 与 ignoresSafeArea 组合时按钮丢失
+        .overlay(alignment: .bottom) {
             VStack(spacing: 12) {
                 Text("拖动和缩放调整图片位置")
                     .font(.system(size: 14))
@@ -102,26 +106,37 @@ struct ImageCropView: View {
                 .padding(.horizontal, 28)
             }
             .padding(.top, 14)
-            .padding(.bottom, 8)
+            .padding(.bottom, 8 + Self.safeAreaBottom)
             .frame(maxWidth: .infinity)
             .background(Color.black.opacity(0.85))
         }
     }
 
+    /// 当前设备底部安全区高度（Home Indicator 区域）
+    private static var safeAreaBottom: CGFloat {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)?
+            .safeAreaInsets.bottom ?? 0
+    }
+
     /// 根据当前 scale + translation 计算裁剪矩形并裁剪
     private func crop() -> UIImage? {
-        let iw = displayImage.size.width
-        let ih = displayImage.size.height
+        let iw = max(displayImage.size.width, 1)
+        let ih = max(displayImage.size.height, 1)
         let cw = screenSize.width
         let ch = screenSize.height
+        // scale 始终 ≥ baseScale > 0，这里再兜底一次防止极端值
+        let s = scale.isFinite && scale > 0 ? scale : baseScale
 
         // 图片左上角在屏幕坐标系中的位置 = 屏幕中心 + translation - 图片显示尺寸/2
         // 屏幕左上角 (0,0) 在图片坐标系中的位置 =
         //   (iw*scale/2 - cw/2 - tx, ih*scale/2 - ch/2 - ty)
-        let cropX = iw / 2 - cw / (2 * scale) - translation.width / scale
-        let cropY = ih / 2 - ch / (2 * scale) - translation.height / scale
-        let cropW = cw / scale
-        let cropH = ch / scale
+        let cropX = iw / 2 - cw / (2 * s) - translation.width / s
+        let cropY = ih / 2 - ch / (2 * s) - translation.height / s
+        let cropW = cw / s
+        let cropH = ch / s
 
         var rect = CGRect(x: cropX, y: cropY, width: cropW, height: cropH)
         rect = rect.intersection(CGRect(x: 0, y: 0, width: iw, height: ih))

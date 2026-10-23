@@ -8,6 +8,12 @@
 import SwiftUI
 import PhotosUI
 
+/// 包装 UIImage 使其可作为 fullScreenCover(item:) 的标识项
+private struct CropItem: Identifiable {
+    let id = UUID()
+    let image: UIImage
+}
+
 struct ProfileView: View {
     @EnvironmentObject var store: AppStore
 
@@ -26,8 +32,7 @@ struct ProfileView: View {
 
     /// 聊天背景设置
     @State private var bgPickerItem: PhotosPickerItem?
-    @State private var cropImage: UIImage?   // 待裁剪的原图
-    @State private var showCrop = false      // 是否显示裁剪页
+    @State private var cropImage: CropItem?   // 待裁剪的原图（用 item 驱动 fullScreenCover，避免条件内容空白）
     @State private var bgOpacity: Double = AppConfig.backgroundOpacity
 
     var body: some View {
@@ -216,25 +221,22 @@ struct ProfileView: View {
                 if let item,
                    let data = try? await item.loadTransferable(type: Data.self),
                    let image = UIImage(data: data) {
-                    // 选完图先进入裁剪，不直接保存
-                    cropImage = image
-                    showCrop = true
+                    // 选完图先进入裁剪，不直接保存。
+                    // 延迟一下，等 PhotosPicker 的 sheet 完全收起，避免两个全屏转场冲突导致白屏。
+                    try? await Task.sleep(for: .milliseconds(350))
+                    cropImage = CropItem(image: image)
                 }
             }
         }
-        .fullScreenCover(isPresented: $showCrop) {
-            if let image = cropImage {
-                ImageCropView(image: image,
-                              onCancel: {
-                                  cropImage = nil
-                                  showCrop = false
-                              },
-                              onComplete: { cropped in
-                                  cropImage = nil
-                                  showCrop = false
-                                  store.setBackgroundImage(cropped)
-                              })
-            }
+        .fullScreenCover(item: $cropImage) { crop in
+            ImageCropView(image: crop.image,
+                          onCancel: {
+                              cropImage = nil
+                          },
+                          onComplete: { cropped in
+                              cropImage = nil
+                              store.setBackgroundImage(cropped)
+                          })
         }
         .onAppear {
             nickname = store.currentUser?.nickname ?? ""

@@ -277,7 +277,7 @@ struct MainView: View {
         .padding(.bottom, 2)
         .background(
             ZStack {
-                Material.ultraThinMaterial
+                Rectangle().fill(.ultraThinMaterial)
                 Color(.systemBackground).opacity(store.backgroundOpacity)
             }
         )

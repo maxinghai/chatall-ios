@@ -227,14 +227,18 @@ final class AppStore: ObservableObject {
         var times: [Int64: String] = [:]
         for f in friends {
             if let last = lastMessage(f.id) {
-                if let p = previewText(last), !p.isEmpty { previews[f.id] = p }
-                if let t = AppConfig.listTimeString(last.createdAt), !t.isEmpty { times[f.id] = t }
+                let p = previewText(last)
+                if !p.isEmpty { previews[f.id] = p }
+                let t = AppConfig.listTimeString(last.createdAt)
+                if !t.isEmpty { times[f.id] = t }
             }
         }
         for g in groups {
             if let last = lastMessage(g.id) {
-                if let p = previewText(last), !p.isEmpty { previews[g.id] = p }
-                if let t = AppConfig.listTimeString(last.createdAt), !t.isEmpty { times[g.id] = t }
+                let p = previewText(last)
+                if !p.isEmpty { previews[g.id] = p }
+                let t = AppConfig.listTimeString(last.createdAt)
+                if !t.isEmpty { times[g.id] = t }
             }
         }
         lastPreviews = previews
@@ -248,8 +252,10 @@ final class AppStore: ObservableObject {
 
     /// 统一更新某个会话的最新预览 + 时间
     private func updateLastInfo(_ peerId: Int64, with msg: ChatMessage) {
-        if let p = previewText(msg), !p.isEmpty { lastPreviews[peerId] = p }
-        if let t = AppConfig.listTimeString(msg.createdAt), !t.isEmpty { lastTimes[peerId] = t }
+        let p = previewText(msg)
+        if !p.isEmpty { lastPreviews[peerId] = p }
+        let t = AppConfig.listTimeString(msg.createdAt)
+        if !t.isEmpty { lastTimes[peerId] = t }
     }
 
     func refreshFriends() async {
@@ -741,7 +747,7 @@ struct LiquidGlassOverlay: View {
     let opacity: Double
     var body: some View {
         ZStack {
-            Material.ultraThinMaterial
+            Rectangle().fill(.ultraThinMaterial)
             Color(.systemBackground)
                 .opacity(opacity)
         }
@@ -758,7 +764,7 @@ struct LiquidGlassListModifier: ViewModifier {
             .scrollContentBackground(.hidden)
             .background(
                 ZStack {
-                    Material.thinMaterial
+                    Rectangle().fill(.thinMaterial)
                     Color(.systemBackground).opacity(opacity)
                 }
             )

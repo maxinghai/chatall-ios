@@ -108,7 +108,21 @@ struct ChatView: View {
         }
     }
 
-    // MARK: - 消息列表
+    /// 预先计算每条消息是否需要显示时间分隔线
+    private func computeSeparatorFlags(messages: [ChatMessage]) -> [Bool] {
+        guard !messages.isEmpty else { return [] }
+        var flags = [Bool](repeating: false, count: messages.count)
+        flags[0] = true // 第一条始终显示
+        for i in 1..<messages.count {
+            flags[i] = AppConfig.shouldShowSeparator(
+                previous: messages[i - 1].createdAt,
+                current: messages[i].createdAt
+            )
+        }
+        return flags
+    }
+
+    // MARK: - 消息列表（续）
 
     private var messages: [ChatMessage] {
         store.messages(for: peerId)
@@ -119,18 +133,16 @@ struct ChatView: View {
     private let bottomAnchor = "chat_bottom_anchor"
 
     private var messageArea: some View {
-        ScrollViewReader { proxy in
+        // 预先算出每条消息是否需要显示时间分隔线（避免在 ViewBuilder 里写复杂 if 导致编译器超时）
+        let separatorFlags = computeSeparatorFlags(messages: messages)
+        let enumerated = Array(messages.enumerated())
+
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 14) {
-                    let enumerated = Array(messages.enumerated())
                     ForEach(enumerated, id: \.element.id) { idx, msg in
-                        // 第一条 或 与上一条间隔超过 5 分钟 / 跨天 → 显示时间分隔线
-                        if idx == 0 || AppConfig.shouldShowSeparator(
-                            previous: messages[idx - 1].createdAt,
-                            current: msg.createdAt
-                        ) {
-                            timeSeparator(for: msg.createdAt)
-                                .padding(.top, idx == 0 ? 4 : 6)
+                        if separatorFlags[idx] {
+                            timeSeparator(for: msg.createdAt, topPad: idx == 0 ? 4 : 6)
                         }
                         MessageRow(message: msg,
                                    isSelf: msg.fromId == (store.currentUser?.id ?? 0),
@@ -156,7 +168,7 @@ struct ChatView: View {
             }
             .background(
                 ZStack {
-                    Material.thinMaterial
+                    Rectangle().fill(.thinMaterial)
                     Color(.systemGroupedBackground).opacity(store.backgroundOpacity)
                 }
             )
@@ -214,7 +226,7 @@ struct ChatView: View {
     }
 
     /// 时间分隔线（微信风格：居中灰色小圆角玻璃标签）
-    private func timeSeparator(for createdAt: String?) -> some View {
+    private func timeSeparator(for createdAt: String?, topPad: CGFloat = 4) -> some View {
         let text = AppConfig.chatTimeString(createdAt)
         let content = text.isEmpty ? AppConfig.listTimeString(createdAt) : text
         return Text(content.isEmpty ? "—" : content)
@@ -222,7 +234,13 @@ struct ChatView: View {
             .foregroundColor(.gray)
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
-            .background(Material.ultraThinMaterial)
+            .padding(.top, topPad)
+            .background(
+                ZStack {
+                    Rectangle().fill(.ultraThinMaterial)
+                    Color(.systemBackground).opacity(0.55)
+                }
+            )
             .cornerRadius(4)
             .frame(maxWidth: .infinity)
     }
@@ -302,7 +320,7 @@ struct ChatView: View {
         .padding(.vertical, 8)
         .background(
             ZStack {
-                Material.ultraThinMaterial
+                Rectangle().fill(.ultraThinMaterial)
                 Color(.systemBackground).opacity(store.backgroundOpacity)
             }
         )
@@ -606,9 +624,7 @@ struct MessageRow: View {
                 Spacer(minLength: 40)
                 VStack(alignment: .trailing, spacing: 2) {
                     bubble
-                        .contextMenu(allowsHitTesting: true) {
-                            contextMenuActions
-                        }
+                        .contextMenu { contextMenuActions }
                     readStatus
                 }
                 statusIndicator
@@ -622,9 +638,7 @@ struct MessageRow: View {
                             .foregroundColor(.gray)
                     }
                     bubble
-                        .contextMenu(allowsHitTesting: true) {
-                            contextMenuActions
-                        }
+                        .contextMenu { contextMenuActions }
                 }
                 Spacer(minLength: 40)
             }

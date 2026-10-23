@@ -18,11 +18,7 @@ struct MainView: View {
     @State private var remarkTarget: FriendItem? = nil
 
     private var tabTitle: String {
-        switch tab {
-        case 0: return "聊天"
-        case 1: return "群组"
-        default: return "我"
-        }
+        tab == 0 ? "会话" : "我"
     }
 
     var body: some View {
@@ -154,24 +150,73 @@ struct MainView: View {
 
     @ViewBuilder
     private var content: some View {
-        switch tab {
-        case 0: friendList
-        case 1: groupList
-        default: ProfileView().padding(.bottom, 56)
-        }
+        tab == 0 ? conversationList : ProfileView().padding(.bottom, 56)
     }
 
-    private var friendList: some View {
+    /// 会话行数据：朋友 / 群组统一展示，按最后消息时间倒序
+    private struct ConversationRow: Identifiable, Equatable {
+        let id: Int64                     // peerKey（朋友 id 或群组 id）
+        let isGroup: Bool
+        let name: String
+        let avatar: String
+        let online: Bool                  // 仅朋友有效
+        let subtitle: String              // 列表预览（群显示最新消息、友显示预览）
+        let lastCreatedAt: Date?          // 用于排序
+        let unread: Int
+    }
+
+    private var conversations: [ConversationRow] {
+        var rows: [ConversationRow] = []
+        for f in store.friends {
+            let peerId = f.id
+            let msgs = store.messages(for: peerId)
+            let lastDate = msgs.last.flatMap { AppConfig.parseDate($0.createdAt) }
+            let preview = store.lastPreviews[peerId] ?? ""
+            rows.append(ConversationRow(
+                id: peerId, isGroup: false,
+                name: f.displayName, avatar: f.avatar,
+                online: f.online,
+                subtitle: preview.isEmpty ? "暂无消息" : preview,
+                lastCreatedAt: lastDate,
+                unread: store.unread(peerId)
+            ))
+        }
+        for g in store.groups {
+            let peerId = g.id
+            let msgs = store.messages(for: peerId)
+            let lastDate = msgs.last.flatMap { AppConfig.parseDate($0.createdAt) }
+            let preview = store.lastPreviews[peerId] ?? ""
+            rows.append(ConversationRow(
+                id: peerId, isGroup: true,
+                name: g.displayName, avatar: g.avatar,
+                online: false,
+                subtitle: preview.isEmpty ? "\(g.memberCount) 人" : preview,
+                lastCreatedAt: lastDate,
+                unread: store.unread(peerId)
+            ))
+        }
+        // 按最后消息时间倒序（无消息的放最后）
+        rows.sort { lhs, rhs in
+            switch (lhs.lastCreatedAt, rhs.lastCreatedAt) {
+            case let (l?, r?): return l > r
+            case (nil, _): return false
+            case (_, nil): return true
+            }
+        }
+        return rows
+    }
+
+    private var conversationList: some View {
         List {
-            ForEach(store.friends) { friend in
-                NavigationLink(destination: ChatView(peerId: friend.id,
-                                                     isGroup: false,
-                                                     title: friend.displayName,
-                                                     avatar: friend.avatar)) {
+            ForEach(conversations) { row in
+                NavigationLink(destination: ChatView(peerId: row.id,
+                                                     isGroup: row.isGroup,
+                                                     title: row.name,
+                                                     avatar: row.avatar)) {
                     HStack(spacing: 12) {
                         ZStack(alignment: .bottomTrailing) {
-                            AvatarView(name: friend.displayName, avatar: friend.avatar, size: 44)
-                            if friend.online {
+                            AvatarView(name: row.name, avatar: row.avatar, size: 44)
+                            if !row.isGroup && row.online {
                                 Circle()
                                     .fill(Color.chatGreen)
                                     .frame(width: 10, height: 10)
@@ -179,58 +224,27 @@ struct MainView: View {
                             }
                         }
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(friend.displayName)
+                            Text(row.name)
                                 .font(.system(size: 16))
-                            if let preview = store.lastPreviews[friend.id], !preview.isEmpty {
-                                Text(preview)
-                                    .font(.system(size: 13))
-                                    .foregroundColor(.gray)
-                                    .lineLimit(1)
-                            }
+                            Text(row.subtitle)
+                                .font(.system(size: 13))
+                                .foregroundColor(.gray)
+                                .lineLimit(1)
                         }
                         Spacer()
-                        rightColumn(time: store.lastTimes[friend.id],
-                                    unread: store.unread(friend.id))
+                        rightColumn(time: store.lastTimes[row.id], unread: row.unread)
                     }
                 }
                 .contextMenu {
-                    Button {
-                        remarkTarget = friend
-                    } label: {
-                        Label("设置备注", systemImage: "pencil")
-                    }
-                    Button(role: .destructive) {
-                        Task { await store.deleteFriend(friend.id) }
-                    } label: {
-                        Label("删除好友", systemImage: "trash")
-                    }
-                }
-            }
-        }
-        .listStyle(PlainListStyle())
-        .liquidGlassList(opacity: store.backgroundOpacity)
-        .padding(.bottom, 56)
-    }
-
-    private var groupList: some View {
-        List {
-            ForEach(store.groups) { group in
-                NavigationLink(destination: ChatView(peerId: group.id,
-                                                     isGroup: true,
-                                                     title: group.displayName,
-                                                     avatar: group.avatar)) {
-                    HStack(spacing: 12) {
-                        AvatarView(name: group.displayName, avatar: group.avatar, size: 44)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(group.displayName)
-                                .font(.system(size: 16))
-                            Text("\(group.memberCount) 人")
-                                .font(.system(size: 12))
-                                .foregroundColor(.gray)
+                    if !row.isGroup, let friend = store.friends.first(where: { $0.id == row.id }) {
+                        Button { remarkTarget = friend } label: {
+                            Label("设置备注", systemImage: "pencil")
                         }
-                        Spacer()
-                        rightColumn(time: store.lastTimes[group.id],
-                                    unread: store.unread(group.id))
+                        Button(role: .destructive) {
+                            Task { await store.deleteFriend(friend.id) }
+                        } label: {
+                            Label("删除好友", systemImage: "trash")
+                        }
                     }
                 }
             }
@@ -269,9 +283,8 @@ struct MainView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 0) {
-            tabButton(index: 0, title: "聊天", icon: "message", badgeCount: totalFriendUnread)
-            tabButton(index: 1, title: "群组", icon: "person.3", badgeCount: totalGroupUnread)
-            tabButton(index: 2, title: "我", icon: "person", badgeCount: 0)
+            tabButton(index: 0, title: "会话", icon: "message", badgeCount: totalUnread)
+            tabButton(index: 1, title: "我", icon: "person", badgeCount: 0)
         }
         .padding(.top, 6)
         .padding(.bottom, 2)
@@ -286,12 +299,8 @@ struct MainView: View {
         }
     }
 
-    private var totalFriendUnread: Int {
-        store.friends.reduce(0) { $0 + store.unread($1.id) }
-    }
-
-    private var totalGroupUnread: Int {
-        store.groups.reduce(0) { $0 + store.unread($1.id) }
+    private var totalUnread: Int {
+        store.unreadCounts.values.reduce(0, +)
     }
 
     private func tabButton(index: Int, title: String, icon: String, badgeCount: Int) -> some View {

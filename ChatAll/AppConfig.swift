@@ -125,6 +125,15 @@ enum AppConfig {
         UserDefaults.standard.removeObject(forKey: userKey)
     }
 
+    // MARK: Demo 模式（仅本地展示，不联网）
+
+    private static let demoModeKey = "chatall.demoMode"
+    /// Demo 模式开关：打开后跳过网络登录，直接展示 mock 数据
+    static var demoMode: Bool {
+        get { UserDefaults.standard.object(forKey: demoModeKey) as? Bool ?? false }
+        set { UserDefaults.standard.set(newValue, forKey: demoModeKey) }
+    }
+
     // MARK: 聊天背景（仅本地，不上传服务器）
 
     private static let bgImageKey = "chatall.backgroundFilename"

@@ -199,6 +199,96 @@ final class AppStore: ObservableObject {
         MessageStore.clearAll()
     }
 
+    // MARK: - Demo 模式（仅本地展示，不联网）
+
+    /// 进入 Demo 模式：跳过所有网络请求，直接注入 mock 数据
+    func enterDemoMode() {
+        AppConfig.demoMode = true
+        let now = Date()
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "zh_CN")
+        df.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        let iso = { (offsetSec: TimeInterval) -> String in
+            df.string(from: now.addingTimeInterval(-offsetSec))
+        }
+
+        currentUser = UserInfo(id: 1001, username: "demo", nickname: "演示用户", avatar: "", email: "")
+        token = "demo"
+        isLoggedIn = true
+        connectionState = .online
+
+        // Mock 好友
+        friends = [
+            FriendItem(id: 2001, username: "alice", nickname: "爱丽丝", avatar: "", remark: "好朋友", online: true),
+            FriendItem(id: 2002, username: "bob", nickname: "鲍勃", avatar: "", remark: "", online: false),
+            FriendItem(id: 2003, username: "carol", nickname: "卡罗尔", avatar: "", remark: "同事", online: true),
+            FriendItem(id: 2004, username: "david", nickname: "大卫", avatar: "", remark: "", online: false),
+        ]
+
+        // Mock 群组
+        groups = [
+            GroupItem(id: 3001, name: "项目开发组", avatar: "", ownerId: 1001, memberCount: 8),
+            GroupItem(id: 3002, name: "周末聚餐", avatar: "", ownerId: 2001, memberCount: 12),
+        ]
+
+        // Mock 消息
+        messagesByPeer = [:]
+        messagesByPeer[2001] = [
+            demoMsg(id: 1, fromId: 2001, peerId: 2001, contentType: "TEXT", content: "明天一起吃饭？", createdAt: iso(120)),
+            demoMsg(id: 2, fromId: 1001, peerId: 2001, contentType: "TEXT", content: "好啊，几点？", createdAt: iso(60)),
+        ]
+        messagesByPeer[2002] = [
+            demoMsg(id: 3, fromId: 2002, peerId: 2002, contentType: "IMAGE", content: "", createdAt: iso(3600)),
+        ]
+        messagesByPeer[2003] = [
+            demoMsg(id: 4, fromId: 2003, peerId: 2003, contentType: "TEXT", content: "下午的会议改到 3 点了", createdAt: iso(7200)),
+        ]
+        messagesByPeer[2004] = [
+            demoMsg(id: 5, fromId: 2004, peerId: 2004, contentType: "VOICE", content: "", duration: 8, createdAt: iso(86400)),
+        ]
+        messagesByPeer[3001] = [
+            demoMsg(id: 6, fromId: 2001, peerId: 3001, groupId: 3001, contentType: "TEXT", content: "大家今天辛苦了！", createdAt: iso(1800)),
+            demoMsg(id: 7, fromId: 2002, peerId: 3001, groupId: 3001, contentType: "TEXT", content: "数据跑通了，发一下报告", createdAt: iso(900)),
+        ]
+        messagesByPeer[3002] = [
+            demoMsg(id: 8, fromId: 2003, peerId: 3002, groupId: 3002, contentType: "FILE", content: "", fileName: "聚餐计划.pdf", createdAt: iso(43200)),
+        ]
+
+        unreadCounts = [2001: 2, 2003: 1, 3001: 1]
+        reloadLastInfo()
+    }
+
+    /// 构造一条 demo 消息
+    private func demoMsg(id: Int64, fromId: Int64, peerId: Int64,
+                         groupId: Int64? = nil,
+                         contentType: String,
+                         content: String,
+                         fileName: String? = nil,
+                         duration: Int? = nil,
+                         createdAt: String) -> ChatMessage {
+        var m = ChatMessage()
+        m.id = id
+        m.msgId = "demo_\(id)"
+        m.fromId = fromId
+        m.toId = groupId == nil ? peerId : nil
+        m.groupId = groupId
+        m.chatType = groupId == nil ? 1 : 2
+        m.contentType = contentType
+        m.content = content
+        m.fileName = fileName
+        m.duration = duration
+        m.status = 1
+        m.localState = 1
+        m.createdAt = createdAt
+        return m
+    }
+
+    /// 退出 Demo 模式
+    func exitDemoMode() {
+        AppConfig.demoMode = false
+        logout()
+    }
+
     func connectWS() {
         guard !token.isEmpty else { return }
         ws.connect(token: token)

@@ -38,42 +38,41 @@ struct ImageCropView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // 图片裁剪区域（占满上方所有空间）
-            ZStack {
-                Color.black
-                Image(uiImage: displayImage)
-                    .resizable()
-                    .frame(width: displayImage.size.width * scale,
-                           height: displayImage.size.height * scale)
-                    .offset(translation)
-                    .clipped()
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .gesture(
-                SimultaneousGesture(
-                    DragGesture()
-                        .onChanged { value in
-                            translation = CGSize(
-                                width: lastTranslation.width + value.translation.width,
-                                height: lastTranslation.height + value.translation.height
-                            )
-                        }
-                        .onEnded { _ in
-                            lastTranslation = translation
-                        },
-                    MagnificationGesture()
-                        .onChanged { value in
-                            // 不允许缩到比 baseScale 更小，保证始终填满屏幕
-                            scale = max(lastScale * value, baseScale)
-                        }
-                        .onEnded { _ in
-                            lastScale = scale
-                        }
-                )
-            )
+        ZStack {
+            Color.black.ignoresSafeArea()
 
-            // 底部操作栏（VStack 内，安全区内，一定可见）
+            Image(uiImage: displayImage)
+                .resizable()
+                .frame(width: displayImage.size.width * scale,
+                       height: displayImage.size.height * scale)
+                .offset(translation)
+                .clipped()
+        }
+        .ignoresSafeArea()
+        .gesture(
+            SimultaneousGesture(
+                DragGesture()
+                    .onChanged { value in
+                        translation = CGSize(
+                            width: lastTranslation.width + value.translation.width,
+                            height: lastTranslation.height + value.translation.height
+                        )
+                    }
+                    .onEnded { _ in
+                        lastTranslation = translation
+                    },
+                MagnificationGesture()
+                    .onChanged { value in
+                        // 不允许缩到比 baseScale 更小，保证始终填满屏幕
+                        scale = max(lastScale * value, baseScale)
+                    }
+                    .onEnded { _ in
+                        lastScale = scale
+                    }
+            )
+        )
+        // 底部按钮栏用 safeAreaInset，保证在安全区内、不被 Home indicator 遮挡
+        .safeAreaInset(edge: .bottom) {
             VStack(spacing: 12) {
                 Text("拖动和缩放调整图片位置")
                     .font(.system(size: 14))
@@ -103,11 +102,10 @@ struct ImageCropView: View {
                 .padding(.horizontal, 28)
             }
             .padding(.top, 14)
-            .padding(.bottom, 20)
+            .padding(.bottom, 8)
             .frame(maxWidth: .infinity)
             .background(Color.black.opacity(0.85))
         }
-        .ignoresSafeArea()
     }
 
     /// 根据当前 scale + translation 计算裁剪矩形并裁剪

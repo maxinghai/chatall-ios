@@ -240,6 +240,11 @@ final class ApiClient {
         return try await request("GET", "/api/message/offline")
     }
 
+    /// 单聊未读统计（服务端口径：对方发给我且我还没读的消息数）
+    func unreadCounts() async throws -> [UnreadCountItem] {
+        return try await request("GET", "/api/message/unread")
+    }
+
     func singleHistory(peerId: Int64, limit: Int = 100) async throws -> [ChatMessage] {
         return try await request("GET", "/api/message/history/single",
                                  query: ["peerId": "\(peerId)", "limit": "\(limit)"])

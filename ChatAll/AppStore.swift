@@ -48,12 +48,12 @@ final class AppStore: ObservableObject {
     @Published var unreadCounts: [Int64: Int] = [:]
     /// 当前打开的会话（peerKey）
     @Published var activePeerId: Int64? = nil
+    /// 当前打开的是否群聊（重连后补发已读用）
+    private var activeIsGroup = false
     /// peerKey -> 最新一条消息的列表页预览文案
     @Published var lastPreviews: [Int64: String] = [:]
     /// peerKey -> 最新一条消息的时间串（已按微信列表规则格式化）
     @Published var lastTimes: [Int64: String] = [:]
-    /// peerKey -> 最后一次打开该会话的时间（用于本地已读推断）
-    private var lastOpenedAt: [Int64: Date] = [:]
 
     // MARK: - 提示
     @Published var errorMessage: String? = nil
@@ -130,6 +130,15 @@ final class AppStore: ObservableObject {
                     if self.everConnected {
                         // 断线重连成功：补拉列表与离线消息
                         Task { await self.reloadAll() }
+                        // 断线期间可能漏收对方的已读回执，清掉"已加载"标记，
+                        // 让会话再次打开时重新拉历史，校准已读/未读显示
+                        self.historyLoadedPeers.removeAll()
+                        if let peer = self.activePeerId {
+                            Task { await self.openConversation(peerId: peer, isGroup: self.activeIsGroup) }
+                        }
+                    } else if let peer = self.activePeerId {
+                        // 首次连接成功时若会话已打开，补发一次已读（连接建立前的 READ 会丢）
+                        self.notifyRead(peerId: peer, isGroup: self.activeIsGroup)
                     }
                     self.everConnected = true
                 }
@@ -198,9 +207,9 @@ final class AppStore: ObservableObject {
         messagesByPeer = [:]
         unreadCounts = [:]
         activePeerId = nil
+        activeIsGroup = false
         lastPreviews = [:]
         lastTimes = [:]
-        lastOpenedAt = [:]
         historyLoadedPeers.removeAll()
         // 清空本地消息存储
         MessageStore.clearAll()
@@ -315,6 +324,7 @@ final class AppStore: ObservableObject {
         await refreshGroups()
         await refreshPending()
         await loadOffline()
+        await refreshUnread()
         reloadLastInfo()
     }
 
@@ -379,6 +389,17 @@ final class AppStore: ObservableObject {
         } catch { /* 静默失败 */ }
     }
 
+    /// 用服务端口径校准单聊未读数（status < 2 即未读），群聊未读仍沿用本地计数
+    func refreshUnread() async {
+        guard let list = try? await ApiClient.shared.unreadCounts() else { return }
+        // 先清掉所有单聊未读，只保留群聊（群 id）的本地计数
+        let groupIds = Set(groups.map { $0.id })
+        unreadCounts = unreadCounts.filter { groupIds.contains($0.key) }
+        for item in list where item.count > 0 && item.peerId != activePeerId {
+            unreadCounts[item.peerId] = item.count
+        }
+    }
+
     func refreshUser() async {
         guard let id = currentUser?.id else { return }
         do {
@@ -402,8 +423,8 @@ final class AppStore: ObservableObject {
 
     func openConversation(peerId: Int64, isGroup: Bool) async {
         activePeerId = peerId
+        activeIsGroup = isGroup
         unreadCounts[peerId] = 0
-        lastOpenedAt[peerId] = Date()
 
         // 本地优先：先从磁盘加载历史消息，瞬间渲染，避免空白等待网络
         if messagesByPeer[peerId] == nil {
@@ -411,8 +432,9 @@ final class AppStore: ObservableObject {
             messagesByPeer[peerId] = local
             if let last = local.last { updateLastInfo(peerId, with: last) }
         }
-        // 打开会话时，把自己发的已发送消息全部标记为已读（本地推断：会话打开 = 对方已看过之前的消息）
-        markOwnMessagesRead(peerId: peerId)
+
+        // 真正打开会话 = 已读：通知服务端并让对方收到已读回执
+        notifyRead(peerId: peerId, isGroup: isGroup)
 
         // 后台拉网络刷新；同一会话本生命周期内只拉一次
         guard !historyLoadedPeers.contains(peerId) else { return }
@@ -432,8 +454,8 @@ final class AppStore: ObservableObject {
             messagesByPeer[peerId] = merged
             if let last = merged.last { updateLastInfo(peerId, with: last) }
             historyLoadedPeers.insert(peerId)
-            // 网络合并后再标记一次，确保从服务器拉下来的自己的历史消息也带上已读状态
-            markOwnMessagesRead(peerId: peerId)
+            // 收到新消息后再补一次已读（历史里可能有打开前刚到达的未读消息）
+            notifyRead(peerId: peerId, isGroup: isGroup)
             // 回写本地，下次冷启动直接显示
             MessageStore.save(peerId: peerId, messages: merged)
         } catch {
@@ -441,8 +463,18 @@ final class AppStore: ObservableObject {
         }
     }
 
+    /// 上报会话已读（仅单聊有意义）。服务端会把对方发来的消息置为已读，并回推已读回执。
+    /// 只表示"我读了对方的消息"，绝不能反过来推断"对方读了我的消息"。
+    private func notifyRead(peerId: Int64, isGroup: Bool) {
+        guard !isGroup, peerId > 0 else { return }
+        ws.send(type: "READ", data: ["peerId": peerId])
+    }
+
     func closeConversation(peerId: Int64) {
-        if activePeerId == peerId { activePeerId = nil }
+        if activePeerId == peerId {
+            activePeerId = nil
+            activeIsGroup = false
+        }
     }
 
     /// 会话 key：群聊用群 id；单聊用对方 id（自己发的取收件人，收到的取发件人）
@@ -469,6 +501,9 @@ final class AppStore: ObservableObject {
                 let senderName = friendName(msg.fromId) ?? "新消息"
                 toastMessage = "\(senderName)：\(previewText(msg))"
             }
+        } else if msg.chatType == 1 && msg.fromId != currentUser?.id {
+            // 正停在这个会话里收到新消息：立即回报已读，让对方看到"已读"
+            notifyRead(peerId: msg.fromId, isGroup: false)
         }
     }
 
@@ -572,6 +607,12 @@ final class AppStore: ObservableObject {
         case "MESSAGE":
             if let data = data, let msg = decodeMessage(data) {
                 appendIncoming(msg)
+            }
+        case "READ_RECEIPT":
+            // 对方读了我的消息：服务端已把消息置为已读，这里同步本地显示
+            if let data = data, let readerId = (data["readerId"] as? NSNumber)?.int64Value {
+                let lastReadId = (data["lastReadId"] as? NSNumber)?.int64Value ?? 0
+                applyReadReceipt(readerId: readerId, lastReadId: lastReadId)
             }
         case "CALL":
             if let data = data { call.handleSignal(data) }
@@ -800,25 +841,26 @@ final class AppStore: ObservableObject {
         }
     }
 
-    /// 本地推断：把该会话中自己发的所有 ACK 消息标记为"对方已读"
-    func markOwnMessagesRead(peerId: Int64) {
-        guard var list = messagesByPeer[peerId], !list.isEmpty else { return }
+    /// 收到对方的已读回执：把该会话中自己已发出的、id 不超过 lastReadId 的消息标记为已读
+    /// （lastReadId=0 表示服务端没给区间，退化为全部标记）
+    private func applyReadReceipt(readerId: Int64, lastReadId: Int64) {
+        guard var list = messagesByPeer[readerId], !list.isEmpty else { return }
         let myId = currentUser?.id ?? 0
         var changed = false
-        for i in list.indices {
-            if list[i].fromId == myId && list[i].localState == 1 && !list[i].readByPeer {
+        for i in list.indices where list[i].chatType == 1 && list[i].fromId == myId {
+            guard list[i].localState == 1, list[i].id > 0 else { continue }
+            if lastReadId > 0 && list[i].id > lastReadId { continue }
+            if !list[i].readByPeer || list[i].status != 2 {
                 list[i].readByPeer = true
+                list[i].status = 2
                 changed = true
             }
         }
         if changed {
-            messagesByPeer[peerId] = list
-            MessageStore.save(peerId: peerId, messages: list)
+            messagesByPeer[readerId] = list
+            MessageStore.save(peerId: readerId, messages: list)
         }
     }
-
-    /// 查看本地打开会话的时间（供 ChatView 判断"我的消息是否被对方已读"）
-    func openedAt(for peerId: Int64) -> Date? { lastOpenedAt[peerId] }
 }
 
 // MARK: - 液态玻璃背景（跨页面共用）

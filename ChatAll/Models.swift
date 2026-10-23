@@ -214,7 +214,7 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var fileName: String? = nil
     var fileSize: Int64? = nil
     var duration: Int? = nil
-    /// 服务端状态字段（当前端不依赖）
+    /// 服务端状态：0未送达 1已送达 2已读（单聊）
     var status: Int? = nil
     var createdAt: String? = nil
 
@@ -224,7 +224,7 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     /// 本地撤回标记：自己在 2 分钟内撤回的消息，仍然留在列表中但显示为灰色提示
     var recalled: Bool = false
 
-    /// 本地"对方已读"标记（无后端真实信号，依本地打开会话推断）
+    /// 对方已读：只以服务端 status=2（已读回执）为准，不再本地推断
     var readByPeer: Bool = false
 
     enum CodingKeys: String, CodingKey {
@@ -249,13 +249,17 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         fileName = try? c.decodeIfPresent(String.self, forKey: .fileName)
         fileSize = try? c.decodeIfPresent(Int64.self, forKey: .fileSize)
         duration = try? c.decodeIfPresent(Int.self, forKey: .duration)
-        status = try? c.decodeIfPresent(Int.self, forKey: .status)
+        let st = (try? c.decodeIfPresent(Int.self, forKey: .status)) ?? 0
+        status = st
         createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
         // 服务端消息默认已发送；本地存储读出的发送态需要保留
         localState = (try? c.decode(Int.self, forKey: .localState)) ?? 1
         // 本地字段：旧文件没有该 key 时默认 false，兼容冷启动读取旧 JSON
         recalled = (try? c.decode(Bool.self, forKey: .recalled)) ?? false
-        readByPeer = (try? c.decode(Bool.self, forKey: .readByPeer)) ?? false
+        // 已读状态以服务端 status 为准（2=已读）：
+        // 旧版本"打开自己的会话即推断对方已读"把 readByPeer 写成了 true，这里不再采用本地值，
+        // 避免历史脏数据继续显示"已读"。
+        readByPeer = st >= 2
     }
 
     func encode(to encoder: Encoder) throws {
@@ -283,6 +287,24 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var peerKey: Int64 {
         if chatType == 2 { return groupId ?? 0 }
         return toId ?? 0
+    }
+}
+
+/// 单聊未读统计（服务端返回 [{peerId, count}]）
+struct UnreadCountItem: Codable {
+    var peerId: Int64 = 0
+    var count: Int = 0
+
+    enum CodingKeys: String, CodingKey {
+        case peerId, count
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        peerId = (try? c.decode(Int64.self, forKey: .peerId)) ?? 0
+        count = (try? c.decode(Int.self, forKey: .count)) ?? 0
     }
 }
 

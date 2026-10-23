@@ -59,6 +59,7 @@ targets:
         NSCameraUsageDescription: 用于视频通话时采集画面
         NSMicrophoneUsageDescription: 用于发送语音消息和语音通话
         NSPhotoLibraryUsageDescription: 用于发送图片和设置头像
+        NSPhotoLibraryAddUsageDescription: 用于保存预览图片到相册
         NSLocalNetworkUsageDescription: 用于连接聊天服务器
         # 服务器是 http 明文，必须放开 ATS
         NSAppTransportSecurity:

@@ -2,10 +2,11 @@
 //  ImagePreviewView.swift
 //  ChatAll
 //
-//  全屏图片预览（仿微信 + hero 过渡）：
-//  - 展开：临时 hero 层从气泡 frame 放大到全屏 + 背景透明渐黑 + 过渡到 pager
-//  - 关闭：下拉时背景渐透明 + hero 缩回气泡位置
-//  - 左右翻页、双指缩放、放大拖动
+//  全屏图片预览（仿微信）：
+//  - 展开：hero 层从气泡 frame 平滑放大到全屏 fit（固定时长，避免 spring 时序错位）
+//  - 关闭：支持任意方向拖拽 / 双指捏合缩小 / 点击返回，缩回气泡或淡出
+//  - 左右翻页、双指缩放、双击 2x 放大到点击位置、放大后拖动
+//  - 顶部栏：返回 / 页码 / 更多（保存图片）
 //
 
 import SwiftUI
@@ -25,32 +26,39 @@ struct ImagePreviewView: View {
     /// hero 过渡阶段
     private enum HeroPhase { case idle, expanding, showing, closing }
     @State private var heroPhase: HeroPhase = .idle
-    /// hero 图片当前 frame（全局坐标系）
     @State private var heroFrame: CGRect = .zero
     @State private var heroImage: UIImage?
     @State private var heroCornerRadius: CGFloat = 10
 
+    // 缩放 & 平移（当前页）
     @State private var scale: CGFloat = 1
     @State private var offset: CGSize = .zero
     @State private var pinchStartScale: CGFloat = 1
     @State private var panStartOffset: CGSize = .zero
     @State private var isPinching = false
 
+    // 手势轴
     @State private var dragAxis: DragAxis?
     @State private var pageDrag: CGFloat = 0
-    @State private var closeDrag: CGFloat = 0
+    /// 拖拽关闭时的 2D 位移（任意方向）
+    @State private var dismissOffset: CGSize = .zero
     @State private var lastTapTime = Date.distantPast
     @State private var pendingChromeWork: DispatchWorkItem?
 
     @State private var viewSize: CGSize = .zero
     @State private var imageSizes: [URL: CGSize] = [:]
 
+    @State private var showActionSheet = false
+    @State private var toast: String?
+
     private let maxScale: CGFloat = 4
-    private let doubleTapScale: CGFloat = 2.5
+    private let doubleTapScale: CGFloat = 2
+    private let enterDuration: Double = 0.32
+    private let exitDuration: Double = 0.26
 
     private enum DragAxis {
         case horizontal
-        case vertical
+        case dismiss
         case pan
     }
 
@@ -71,41 +79,59 @@ struct ImagePreviewView: View {
             let screenRect = CGRect(origin: .zero, size: geo.size)
 
             ZStack {
-                // 蒙板：hero 展开时 0→1 变黑；下拉关闭时 1→0 变透明
-                Color.black.opacity(bgOpacity).ignoresSafeArea()
+                // 蒙板（整层忽略安全区，使本地坐标 == .global，与气泡 sourceFrame 对齐）
+                Color.black.opacity(bgOpacity)
 
-                // pager 内容：hero 未完成展开前隐藏
+                // pager 内容
                 pager(size: geo.size)
                     .contentShape(Rectangle())
                     .gesture(dragGesture(in: geo.size))
                     .simultaneousGesture(magnifyGesture(in: geo.size))
                     .simultaneousGesture(tapGesture(in: geo.size))
-                    .offset(y: closeDrag)
-                    .scaleEffect(closeScale(in: geo.size))
+                    .offset(x: dismissOffset.width, y: dismissOffset.height)
+                    .scaleEffect(dismissScale)
                     .opacity(heroPhase == .showing ? 1 : 0)
                     .allowsHitTesting(heroPhase == .showing)
                     .onChange(of: geo.size) { viewSize = $0 }
 
-                // hero 过渡层：展开/关闭动画
-                heroLayer(in: screenRect)
+                // hero 过渡层
+                heroLayer
 
                 chrome
-                    .opacity(heroPhase == .showing || heroPhase == .closing ? chromeOpacity : 0)
+                    .padding(.top, safeAreaTop)
+                    .opacity(chromeOpacity)
                     .allowsHitTesting(heroPhase == .showing && !isDismissing)
             }
+            .ignoresSafeArea()
             .statusBar(hidden: true)
             .onAppear {
                 viewSize = geo.size
                 playEnterAnimation(in: screenRect)
             }
             .onChange(of: index) { _ in resetZoom() }
+            .confirmationDialog("操作", isPresented: $showActionSheet, titleVisibility: .hidden) {
+                Button("保存图片") { saveCurrentImage() }
+                Button("取消", role: .cancel) {}
+            }
+            .overlay(alignment: .center) {
+                if let toast = toast {
+                    Text(toast)
+                        .font(.system(size: 14))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Capsule().fill(Color.black.opacity(0.78)))
+                        .transition(.opacity)
+                        .allowsHitTesting(false)
+                }
+            }
         }
     }
 
     // MARK: - hero 过渡层
 
     @ViewBuilder
-    private func heroLayer(in screenRect: CGRect) -> some View {
+    private var heroLayer: some View {
         if let image = heroImage, (heroPhase == .expanding || heroPhase == .closing) {
             Image(uiImage: image)
                 .resizable()
@@ -120,9 +146,8 @@ struct ImagePreviewView: View {
     // MARK: - 展开 / 关闭动画
 
     private func playEnterAnimation(in screenRect: CGRect) {
-        // 如果没有 source frame，直接显示（无过渡）
         guard let source = sourceFrame else {
-            withAnimation(.easeOut(duration: 0.25)) {
+            withAnimation(.easeOut(duration: enterDuration)) {
                 bgOpacity = 1
             }
             heroPhase = .showing
@@ -132,23 +157,19 @@ struct ImagePreviewView: View {
         heroPhase = .expanding
         heroFrame = source
         heroCornerRadius = 10
-        heroImage = nil   // 稍后加载
+        heroImage = nil
 
-        // 预加载 hero 图
         Task { @MainActor in
             let img = await ImageCache.image(for: urls[index])
             heroImage = img
-            // 图片源（fit 模式）：从 source.frame 过渡到全屏 fit
-            // 计算屏幕上 image.fit 后的目标 frame
             let target = fitFrame(for: img?.size ?? .zero, in: screenRect)
-            // 动画起点是 source（气泡的 160x160），终点是 fit 后的目标
-            withAnimation(.interpolatingSpring(stiffness: 360, damping: 38)) {
+            // 固定时长 easeOut，结束时与 pager 对齐，避免 spring 时序错位
+            withAnimation(.easeOut(duration: enterDuration)) {
                 heroFrame = target
                 heroCornerRadius = 0
                 bgOpacity = 1
             }
-            // 动画结束后切到 pager，hero 图保留用于后续关闭过渡
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.36) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + enterDuration) {
                 heroPhase = .showing
             }
         }
@@ -164,33 +185,51 @@ struct ImagePreviewView: View {
         return CGRect(x: screen.midX - w / 2, y: screen.midY - h / 2, width: w, height: h)
     }
 
-    private func playExitAnimation(to dismiss: Bool, in screenRect: CGRect) {
-        // 关闭：pager 隐藏 → hero 层显示 → 缩回到 sourceFrame
+    private func playExitAnimation(in screenRect: CGRect) {
         heroPhase = .closing
 
-        guard let source = sourceFrame else {
-            // 没 source：直接淡出背景
-            withAnimation(.easeOut(duration: 0.18)) {
+        // 源图不可见或无 source：直接淡出
+        guard let source = sourceFrame, isSourceVisible(source) else {
+            withAnimation(.easeOut(duration: exitDuration)) {
                 bgOpacity = 0
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { onDismiss() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + exitDuration) { onDismiss() }
             return
         }
 
         Task { @MainActor in
             let img = await ImageCache.image(for: urls[index])
             heroImage = img
-            // 把 hero 层瞬间放到 pager 当前位置（screen center fit）
-            heroFrame = fitFrame(for: img?.size ?? .zero, in: screenRect)
+            let fit = fitFrame(for: img?.size ?? .zero, in: screenRect)
+            // 从当前拖拽/缩放后的实际位置开始，避免从屏幕中心跳变
+            let combinedScale = dismissScale * scale
+            let startFrame = CGRect(
+                x: fit.midX + dismissOffset.width + offset.width - fit.width * combinedScale / 2,
+                y: fit.midY + dismissOffset.height + offset.height - fit.height * combinedScale / 2,
+                width: fit.width * combinedScale,
+                height: fit.height * combinedScale
+            )
+            heroFrame = startFrame
             heroCornerRadius = 0
-            // 从当前位置缩回到 source
-            withAnimation(.easeOut(duration: 0.25)) {
+            withAnimation(.easeOut(duration: exitDuration)) {
                 heroFrame = source
                 heroCornerRadius = 10
                 bgOpacity = 0
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) { onDismiss() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + exitDuration) { onDismiss() }
         }
+    }
+
+    /// 源缩略图是否仍在屏幕内（滚出屏幕则改用淡出，避免图片飞回不可见区域）
+    private func isSourceVisible(_ source: CGRect) -> Bool {
+        let screen = CGRect(origin: .zero, size: viewSize)
+        return screen.intersects(source.insetBy(dx: -20, dy: -20))
+    }
+
+    private func triggerDismiss() {
+        guard !isDismissing else { return }
+        isDismissing = true
+        playExitAnimation(in: CGRect(origin: .zero, size: viewSize))
     }
 
     // MARK: - 分页容器
@@ -221,7 +260,7 @@ struct ImagePreviewView: View {
         .clipped()
     }
 
-    // MARK: - 顶部栏
+    // MARK: - 顶部栏（微信风格：返回 / 页码 / 更多）
 
     private var chrome: some View {
         VStack {
@@ -229,26 +268,33 @@ struct ImagePreviewView: View {
                 HStack {
                     Button { triggerDismiss() } label: {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 17, weight: .semibold))
+                            .font(.system(size: 18, weight: .semibold))
                             .foregroundColor(.white)
-                            .frame(width: 38, height: 38)
-                            .background(Circle().fill(Color.black.opacity(0.35)))
+                            .frame(width: 40, height: 40)
+                            .background(Circle().fill(Color.black.opacity(0.4)))
                     }
                     .buttonStyle(PlainButtonStyle())
+
                     Spacer()
+
+                    Button { showActionSheet = true } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(width: 40, height: 40)
+                            .background(Circle().fill(Color.black.opacity(0.4)))
+                    }
+                    .buttonStyle(PlainButtonStyle())
                 }
 
                 if urls.count > 1 {
                     Text("\(index + 1) / \(urls.count)")
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.system(size: 15, weight: .medium))
                         .foregroundColor(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Capsule().fill(Color.black.opacity(0.35)))
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 6)
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
 
             Spacer()
         }
@@ -259,28 +305,32 @@ struct ImagePreviewView: View {
 
     private var chromeOpacity: Double {
         guard chromeVisible else { return 0 }
-        guard closeDrag > 0 else { return 1 }
-        return max(0, 1 - Double(closeDrag / 200))
+        let dist = hypot(dismissOffset.width, dismissOffset.height)
+        return max(0, 1 - Double(dist / 200))
     }
 
-    private func closeScale(in size: CGSize) -> CGFloat {
-        guard size.height > 0 else { return 1 }
-        return max(0.5, 1 - closeDrag / (size.height * 2))
+    private var dismissScale: CGFloat {
+        let dist = hypot(dismissOffset.width, dismissOffset.height)
+        guard viewSize.height > 0, dist > 0 else { return 1 }
+        return max(0.5, 1 - dist / (viewSize.height * 0.9))
     }
 
-    private func triggerDismiss() {
-        guard !isDismissing else { return }
-        isDismissing = true
-        playExitAnimation(to: true, in: CGRect(origin: .zero, size: viewSize))
+    /// 顶部安全区高度（用于把顶部栏推到刘海/状态栏下方；App 只支持竖屏，读一次即可）
+    private var safeAreaTop: CGFloat {
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first
+        return scene?.windows.first(where: { $0.isKeyWindow })?.safeAreaInsets.top ?? 0
     }
 
-    // MARK: - 拖动：翻页 / 下拉关闭 / 放大后平移
+    // MARK: - 拖动：翻页 / 拖拽关闭 / 放大后平移
 
     private func dragGesture(in size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 8)
             .onChanged { value in
                 guard !isDismissing, !isPinching, heroPhase == .showing else { return }
 
+                // 放大后：平移图片
                 if scale > 1.001 {
                     if dragAxis != .pan {
                         dragAxis = .pan
@@ -292,22 +342,23 @@ struct ImagePreviewView: View {
                     return
                 }
 
+                // 首次判定手势方向
                 if dragAxis == nil {
                     let dx = value.translation.width
                     let dy = value.translation.height
                     guard max(abs(dx), abs(dy)) > 8 else { return }
-                    dragAxis = abs(dx) >= abs(dy) ? .horizontal : .vertical
+                    dragAxis = abs(dx) >= abs(dy) ? .horizontal : .dismiss
                 }
 
                 switch dragAxis {
-                case .some(.horizontal):
+                case .horizontal:
                     pageDrag = pageDragValue(for: value.translation.width, in: size)
-                    closeDrag = 0
-                case .some(.vertical):
-                    let dy = max(0, value.translation.height)
-                    closeDrag = dy
-                    // 下拉关闭：背景从黑渐透明
-                    bgOpacity = max(0, 1 - Double(dy / 400))
+                    dismissOffset = .zero
+                case .dismiss:
+                    // 任意方向拖拽：图片跟随手指 1:1，轻微缩放 + 背景渐变
+                    dismissOffset = value.translation
+                    let dist = hypot(dismissOffset.width, dismissOffset.height)
+                    bgOpacity = max(0, 1 - Double(dist / 420))
                 default:
                     break
                 }
@@ -324,10 +375,10 @@ struct ImagePreviewView: View {
                 }
 
                 switch dragAxis {
-                case .some(.horizontal):
+                case .horizontal:
                     finishPageDrag(value, in: size)
-                case .some(.vertical):
-                    finishCloseDrag(value, in: size)
+                case .dismiss:
+                    finishDismissDrag(value)
                 default:
                     break
                 }
@@ -341,7 +392,7 @@ struct ImagePreviewView: View {
         if atLeadingEdge || atTrailingEdge {
             return dx * 0.25
         }
-        return max(-size.width * 0.8, min(size.width * 0.8, dx))
+        return max(-size.width * 0.85, min(size.width * 0.85, dx))
     }
 
     private func finishPageDrag(_ value: DragGesture.Value, in size: CGSize) {
@@ -358,32 +409,27 @@ struct ImagePreviewView: View {
             }
         }
 
-        if target != index {
-            withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.86)) {
-                index = target
-                pageDrag = 0
-            }
-        } else {
-            withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.86)) {
-                pageDrag = 0
-            }
+        withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.88)) {
+            if target != index { index = target }
+            pageDrag = 0
         }
     }
 
-    private func finishCloseDrag(_ value: DragGesture.Value, in size: CGSize) {
-        let dy = value.translation.height
-        let predicted = value.predictedEndTranslation.height
-        if dy > 120 || predicted > 300 {
+    private func finishDismissDrag(_ value: DragGesture.Value) {
+        let dist = hypot(value.translation.width, value.translation.height)
+        let predictedDist = hypot(value.predictedEndTranslation.width,
+                                  value.predictedEndTranslation.height)
+        if dist > 120 || predictedDist > 300 {
             triggerDismiss()
         } else {
             withAnimation(.interpolatingSpring(stiffness: 280, damping: 28)) {
-                closeDrag = 0
+                dismissOffset = .zero
                 bgOpacity = 1
             }
         }
     }
 
-    // MARK: - 双指缩放
+    // MARK: - 双指缩放（含捏合缩小关闭）
 
     private func magnifyGesture(in size: CGSize) -> some Gesture {
         MagnificationGesture()
@@ -393,19 +439,33 @@ struct ImagePreviewView: View {
                     isPinching = true
                     dragAxis = nil
                     pageDrag = 0
-                    closeDrag = 0
-                    bgOpacity = 1
+                    dismissOffset = .zero
                     pinchStartScale = scale
                     panStartOffset = offset
                 }
-                let newScale = min(maxScale, max(1, pinchStartScale * value))
+                let newScale = min(maxScale, pinchStartScale * value)
                 scale = newScale
-                offset = clampOffset(offset, scale: newScale, in: size)
+                if scale < 1 {
+                    // 缩小：背景随缩放淡出
+                    bgOpacity = Double(max(0, scale))
+                } else {
+                    offset = clampOffset(offset, scale: newScale, in: size)
+                }
             }
             .onEnded { _ in
                 isPinching = false
-                withAnimation(.interpolatingSpring(stiffness: 280, damping: 28)) {
-                    offset = clampOffset(offset, scale: scale, in: size)
+                if scale < 0.85 {
+                    // 捏合缩小到一定程度：关闭
+                    triggerDismiss()
+                } else if scale < 1 {
+                    withAnimation(.interpolatingSpring(stiffness: 280, damping: 28)) {
+                        scale = 1
+                        bgOpacity = 1
+                    }
+                } else {
+                    withAnimation(.interpolatingSpring(stiffness: 280, damping: 28)) {
+                        offset = clampOffset(offset, scale: scale, in: size)
+                    }
                 }
             }
     }
@@ -480,6 +540,27 @@ struct ImagePreviewView: View {
         isPinching = false
         dragAxis = nil
         pageDrag = 0
+        dismissOffset = .zero
+    }
+
+    // MARK: - 保存图片
+
+    private func saveCurrentImage() {
+        Task { @MainActor in
+            guard let img = await ImageCache.image(for: urls[index]) else {
+                showToast("图片加载失败")
+                return
+            }
+            UIImageWriteToSavedPhotosAlbum(img, nil, nil, nil)
+            showToast("已保存到相册")
+        }
+    }
+
+    private func showToast(_ msg: String) {
+        withAnimation { toast = msg }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            withAnimation { toast = nil }
+        }
     }
 }
 

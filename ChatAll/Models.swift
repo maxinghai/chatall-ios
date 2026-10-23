@@ -221,10 +221,16 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     /// 本地发送态：0=发送中 1=已发送（ACK 后置 1） 2=发送失败
     var localState: Int = 1
 
+    /// 本地撤回标记：自己在 2 分钟内撤回的消息，仍然留在列表中但显示为灰色提示
+    var recalled: Bool = false
+
+    /// 本地"对方已读"标记（无后端真实信号，依本地打开会话推断）
+    var readByPeer: Bool = false
+
     enum CodingKeys: String, CodingKey {
         case id, msgId, fromId, toId, groupId, chatType, contentType
         case content, fileUrl, fileName, fileSize, duration, status, createdAt
-        case localState
+        case localState, recalled, readByPeer
     }
 
     init() {}
@@ -247,6 +253,9 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
         // 服务端消息默认已发送；本地存储读出的发送态需要保留
         localState = (try? c.decode(Int.self, forKey: .localState)) ?? 1
+        // 本地字段：旧文件没有该 key 时默认 false，兼容冷启动读取旧 JSON
+        recalled = (try? c.decode(Bool.self, forKey: .recalled)) ?? false
+        readByPeer = (try? c.decode(Bool.self, forKey: .readByPeer)) ?? false
     }
 
     func encode(to encoder: Encoder) throws {
@@ -266,6 +275,8 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         try c.encodeIfPresent(status, forKey: .status)
         try c.encodeIfPresent(createdAt, forKey: .createdAt)
         try c.encode(localState, forKey: .localState)
+        try c.encode(recalled, forKey: .recalled)
+        try c.encode(readByPeer, forKey: .readByPeer)
     }
 
     /// 会话标识：单聊用对方 id，群聊用群 id

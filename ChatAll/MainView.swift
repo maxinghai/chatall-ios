@@ -26,46 +26,54 @@ struct MainView: View {
     }
 
     var body: some View {
-        NavigationView {
-            VStack(spacing: 0) {
-                content
-            }
-            .navigationBarTitle(tabTitle, displayMode: .inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    connectionBadge
+        ZStack {
+            // 底图：所有页面共用同一张
+            ChatBackgroundImageView(url: store.backgroundURL)
+
+            NavigationView {
+                VStack(spacing: 0) {
+                    content
                 }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    pendingButton
+                .navigationBarTitle(tabTitle, displayMode: .inline)
+                .toolbarBackground(.hidden, for: .navigationBar)
+                .toolbarBackground(.hidden, for: .bottomBar)
+                .toolbarBackground(.automatic, for: .tabBar)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        connectionBadge
+                    }
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        pendingButton
+                    }
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        plusMenu
+                    }
                 }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    plusMenu
+                .overlay(alignment: .bottom) { bottomBar }
+                .overlay(alignment: .top) { toastView }
+            }
+            .navigationViewStyle(StackNavigationViewStyle())
+            .sheet(isPresented: $showSearch) { SearchUserSheet() }
+            .sheet(isPresented: $showCreateGroup) { CreateGroupSheet() }
+            .sheet(isPresented: $showPending) { PendingRequestsSheet() }
+            .sheet(item: $remarkTarget) { friend in
+                RemarkSheet(friend: friend)
+            }
+            .fullScreenCover(isPresented: $store.callUIVisible, onDismiss: {
+                // 下滑返回：来电中视为拒绝；通话中则收起为悬浮小窗/悬浮电话图标，不挂断
+                if store.call.state == .incoming {
+                    store.call.hangup()
+                } else if store.call.state != .idle {
+                    store.call.minimizeUI()
                 }
+            }) {
+                CallView(call: store.call)
             }
-            .overlay(alignment: .bottom) { bottomBar }
-            .overlay(alignment: .top) { toastView }
-        }
-        .navigationViewStyle(StackNavigationViewStyle())
-        .sheet(isPresented: $showSearch) { SearchUserSheet() }
-        .sheet(isPresented: $showCreateGroup) { CreateGroupSheet() }
-        .sheet(isPresented: $showPending) { PendingRequestsSheet() }
-        .sheet(item: $remarkTarget) { friend in
-            RemarkSheet(friend: friend)
-        }
-        .fullScreenCover(isPresented: $store.callUIVisible, onDismiss: {
-            // 下滑返回：来电中视为拒绝；通话中则收起为悬浮小窗/悬浮电话图标，不挂断
-            if store.call.state == .incoming {
-                store.call.hangup()
-            } else if store.call.state != .idle {
-                store.call.minimizeUI()
-            }
-        }) {
-            CallView(call: store.call)
-        }
-        .overlay {
-            // 收起后悬浮在页面上的通话小窗（视频）/电话图标（语音），点击恢复通话页
-            CallMiniOverlay(call: store.call) {
-                store.call.restoreUI()
+            .overlay {
+                // 收起后悬浮在页面上的通话小窗（视频）/电话图标（语音），点击恢复通话页
+                CallMiniOverlay(call: store.call) {
+                    store.call.restoreUI()
+                }
             }
         }
         .onChange(of: store.toastMessage) { value in
@@ -167,7 +175,7 @@ struct MainView: View {
                                 Circle()
                                     .fill(Color.chatGreen)
                                     .frame(width: 10, height: 10)
-                                    .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 1.5))
+                                    .overlay(Circle().stroke(Color(.separator), lineWidth: 1.5))
                             }
                         }
                         VStack(alignment: .leading, spacing: 3) {
@@ -181,9 +189,8 @@ struct MainView: View {
                             }
                         }
                         Spacer()
-                        if store.unread(friend.id) > 0 {
-                            badge(store.unread(friend.id))
-                        }
+                        rightColumn(time: store.lastTimes[friend.id],
+                                    unread: store.unread(friend.id))
                     }
                 }
                 .contextMenu {
@@ -201,6 +208,7 @@ struct MainView: View {
             }
         }
         .listStyle(PlainListStyle())
+        .liquidGlassList(opacity: store.backgroundOpacity)
         .padding(.bottom, 56)
     }
 
@@ -221,15 +229,30 @@ struct MainView: View {
                                 .foregroundColor(.gray)
                         }
                         Spacer()
-                        if store.unread(group.id) > 0 {
-                            badge(store.unread(group.id))
-                        }
+                        rightColumn(time: store.lastTimes[group.id],
+                                    unread: store.unread(group.id))
                     }
                 }
             }
         }
         .listStyle(PlainListStyle())
+        .liquidGlassList(opacity: store.backgroundOpacity)
         .padding(.bottom, 56)
+    }
+
+    /// 列表行右侧的「时间 + 未读数」列
+    @ViewBuilder
+    private func rightColumn(time: String?, unread: Int) -> some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            if let t = time, !t.isEmpty {
+                Text(t)
+                    .font(.system(size: 12))
+                    .foregroundColor(.gray)
+            }
+            if unread > 0 {
+                badge(unread)
+            }
+        }
     }
 
     private func badge(_ count: Int) -> some View {
@@ -252,7 +275,12 @@ struct MainView: View {
         }
         .padding(.top, 6)
         .padding(.bottom, 2)
-        .background(Color(.systemBackground))
+        .background(
+            ZStack {
+                Material.ultraThinMaterial
+                Color(.systemBackground).opacity(store.backgroundOpacity)
+            }
+        )
         .overlay(alignment: .top) {
             Divider()
         }
@@ -365,7 +393,9 @@ struct PendingRequestsSheet: View {
                 }
             }
             .listStyle(PlainListStyle())
+            .liquidGlassList(opacity: store.backgroundOpacity)
             .navigationBarTitle("新的朋友", displayMode: .inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("关闭") { presentationMode.wrappedValue.dismiss() }
@@ -421,6 +451,7 @@ struct SearchUserSheet: View {
                     }
                 }
                 .listStyle(PlainListStyle())
+                .liquidGlassList(opacity: store.backgroundOpacity)
 
                 HStack {
                     Text("验证消息")
@@ -432,6 +463,7 @@ struct SearchUserSheet: View {
                 .padding()
             }
             .navigationBarTitle("添加好友", displayMode: .inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("关闭") { presentationMode.wrappedValue.dismiss() }
@@ -495,8 +527,10 @@ struct CreateGroupSheet: View {
                     }
                 }
                 .listStyle(PlainListStyle())
+                .liquidGlassList(opacity: store.backgroundOpacity)
             }
             .navigationBarTitle("发起群聊", displayMode: .inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("取消") { presentationMode.wrappedValue.dismiss() }
@@ -547,7 +581,9 @@ struct RemarkSheet: View {
                         .foregroundColor(.gray)
                 }
             }
+            .liquidGlassList(opacity: store.backgroundOpacity)
             .navigationBarTitle("设置备注", displayMode: .inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("取消") { presentationMode.wrappedValue.dismiss() }

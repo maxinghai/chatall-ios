@@ -40,6 +40,7 @@ struct ChatView: View {
                 inputBar
             }
             .navigationBarTitle(title, displayMode: .inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 // iOS 15 的 ToolbarContentBuilder 不支持 if（buildIf 需 iOS 16+），
                 // 条件判断必须放在 ToolbarItem 内部的 ViewBuilder 里。
@@ -121,12 +122,23 @@ struct ChatView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 14) {
-                    ForEach(messages) { msg in
+                    let enumerated = Array(messages.enumerated())
+                    ForEach(enumerated, id: \.element.id) { idx, msg in
+                        // 第一条 或 与上一条间隔超过 5 分钟 / 跨天 → 显示时间分隔线
+                        if idx == 0 || AppConfig.shouldShowSeparator(
+                            previous: messages[idx - 1].createdAt,
+                            current: msg.createdAt
+                        ) {
+                            timeSeparator(for: msg.createdAt)
+                                .padding(.top, idx == 0 ? 4 : 6)
+                        }
                         MessageRow(message: msg,
                                    isSelf: msg.fromId == (store.currentUser?.id ?? 0),
                                    showSender: isGroup,
                                    senderName: senderName(msg),
                                    senderAvatar: senderAvatar(msg),
+                                   store: store,
+                                   peerId: peerId,
                                    recordFrame: { url, frame in imageFrames[url] = frame },
                                    onTapImage: { url in openImagePreview(url: url) },
                                    onTapFile: { m in downloadAndShare(m) },
@@ -142,7 +154,12 @@ struct ChatView: View {
                 .padding(.bottom, 12)
                 .padding(.horizontal, 12)
             }
-            .background(Color(.systemGroupedBackground))
+            .background(
+                ZStack {
+                    Material.thinMaterial
+                    Color(.systemGroupedBackground).opacity(store.backgroundOpacity)
+                }
+            )
             .contentShape(Rectangle())
             .onTapGesture { inputFocused = false }
             .onChange(of: messages.count) { _ in
@@ -194,6 +211,20 @@ struct ChatView: View {
     private func senderAvatar(_ msg: ChatMessage) -> String {
         if msg.fromId == (store.currentUser?.id ?? 0) { return store.currentUser?.avatar ?? "" }
         return store.friends.first(where: { $0.id == msg.fromId })?.avatar ?? ""
+    }
+
+    /// 时间分隔线（微信风格：居中灰色小圆角玻璃标签）
+    private func timeSeparator(for createdAt: String?) -> some View {
+        let text = AppConfig.chatTimeString(createdAt)
+        let content = text.isEmpty ? AppConfig.listTimeString(createdAt) : text
+        return Text(content.isEmpty ? "—" : content)
+            .font(.system(size: 11))
+            .foregroundColor(.gray)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .background(Material.ultraThinMaterial)
+            .cornerRadius(4)
+            .frame(maxWidth: .infinity)
     }
 
     // MARK: - 输入栏
@@ -269,7 +300,12 @@ struct ChatView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color(.systemBackground))
+        .background(
+            ZStack {
+                Material.ultraThinMaterial
+                Color(.systemBackground).opacity(store.backgroundOpacity)
+            }
+        )
     }
 
     // MARK: - 发送
@@ -534,6 +570,8 @@ struct MessageRow: View {
     let showSender: Bool
     let senderName: String
     let senderAvatar: String
+    let store: AppStore
+    let peerId: Int64
     let recordFrame: (URL, CGRect) -> Void
     let onTapImage: (URL) -> Void
     let onTapFile: (ChatMessage) -> Void
@@ -541,11 +579,39 @@ struct MessageRow: View {
     let isPlaying: Bool
 
     var body: some View {
+        if message.recalled {
+            recalledMessage
+        } else {
+            normalRow
+        }
+    }
+
+    /// 撤回消息：居中灰色提示（微信风格）
+    private var recalledMessage: some View {
+        Text(isSelf ? "你撤回了一条消息" : "\(senderName) 撤回了一条消息")
+            .font(.system(size: 12))
+            .foregroundColor(.gray)
+            .frame(maxWidth: .infinity)
+            .contextMenu {
+                Button(role: .destructive) {
+                    store.deleteMessage(peerId: peerId, msgId: message.msgId)
+                } label: { Label("删除", systemImage: "trash") }
+            }
+    }
+
+    /// 普通消息行
+    private var normalRow: some View {
         HStack(alignment: .top, spacing: 8) {
             if isSelf {
                 Spacer(minLength: 40)
+                VStack(alignment: .trailing, spacing: 2) {
+                    bubble
+                        .contextMenu(allowsHitTesting: true) {
+                            contextMenuActions
+                        }
+                    readStatus
+                }
                 statusIndicator
-                bubble
                 AvatarView(name: senderName, avatar: senderAvatar, size: 32)
             } else {
                 AvatarView(name: senderName, avatar: senderAvatar, size: 32)
@@ -556,9 +622,43 @@ struct MessageRow: View {
                             .foregroundColor(.gray)
                     }
                     bubble
+                        .contextMenu(allowsHitTesting: true) {
+                            contextMenuActions
+                        }
                 }
                 Spacer(minLength: 40)
             }
+        }
+        .textSelection(.disabled)   // 整行禁用文本选择，彻底屏蔽英文系统 edit menu
+    }
+
+    /// 长按气泡弹出的菜单项（全部中文，覆盖系统英文菜单）
+    @ViewBuilder
+    private var contextMenuActions: some View {
+        // 文本消息 → 可复制
+        if message.contentType == "TEXT",
+           let content = message.content, !content.isEmpty {
+            Button {
+                UIPasteboard.general.string = content
+            } label: { Label("复制", systemImage: "doc.on.doc") }
+        }
+        if isSelf && store.canRecall(message) {
+            Button {
+                store.recallMessage(peerId: peerId, msgId: message.msgId)
+            } label: { Label("撤回", systemImage: "arrow.uturn.left") }
+        }
+        Button(role: .destructive) {
+            store.deleteMessage(peerId: peerId, msgId: message.msgId)
+        } label: { Label("删除", systemImage: "trash") }
+    }
+
+    /// 自己发的 ACK 消息下方显示"已读 / 未读"（仅单聊，群聊无意义）
+    @ViewBuilder
+    private var readStatus: some View {
+        if isSelf && message.localState == 1 && !showSender {
+            Text(message.readByPeer ? "已读" : "未读")
+                .font(.system(size: 10))
+                .foregroundColor(.gray)
         }
     }
 
@@ -637,6 +737,7 @@ struct MessageRow: View {
             .padding(.vertical, 9)
             .background(isSelf ? Color.chatGreen : Color.bubbleGray)
             .cornerRadius(14)
+            .textSelection(.disabled)   // 禁用系统英文选择菜单，统一用我们自己的 contextMenu
     }
 
     private var imageBubble: some View {
@@ -681,29 +782,25 @@ struct MessageRow: View {
     }
 
     private var fileBubble: some View {
-        Button {
-            onTapFile(message)
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "doc.fill")
-                    .font(.system(size: 26))
-                    .foregroundColor(isSelf ? .white : .chatGreen)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(message.fileName ?? "文件")
-                        .font(.system(size: 14))
-                        .foregroundColor(isSelf ? .white : .primary)
-                        .lineLimit(1)
-                    Text(fileSizeText)
-                        .font(.system(size: 11))
-                        .foregroundColor(isSelf ? Color.white.opacity(0.8) : .gray)
-                }
+        HStack(spacing: 10) {
+            Image(systemName: "doc.fill")
+                .font(.system(size: 26))
+                .foregroundColor(isSelf ? .white : .chatGreen)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(message.fileName ?? "文件")
+                    .font(.system(size: 14))
+                    .foregroundColor(isSelf ? .white : .primary)
+                    .lineLimit(1)
+                Text(fileSizeText)
+                    .font(.system(size: 11))
+                    .foregroundColor(isSelf ? Color.white.opacity(0.8) : .gray)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(isSelf ? Color.chatGreen : Color.bubbleGray)
-            .cornerRadius(14)
         }
-        .buttonStyle(PlainButtonStyle())
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(isSelf ? Color.chatGreen : Color.bubbleGray)
+        .cornerRadius(14)
+        .onTapGesture { onTapFile(message) }
     }
 
     private var fileSizeText: String {
@@ -715,26 +812,22 @@ struct MessageRow: View {
     }
 
     private var voiceBubble: some View {
-        Button {
-            onTapVoice(message)
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 14))
-                    .foregroundColor(isSelf ? .white : .primary)
-                Image(systemName: "waveform")
-                    .font(.system(size: 16))
-                    .foregroundColor(isSelf ? .white : .chatGreen)
-                Text(AppConfig.durationText(message.duration))
-                    .font(.system(size: 13))
-                    .foregroundColor(isSelf ? .white : .primary)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(isSelf ? Color.chatGreen : Color.bubbleGray)
-            .cornerRadius(14)
+        HStack(spacing: 8) {
+            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                .font(.system(size: 14))
+                .foregroundColor(isSelf ? .white : .primary)
+            Image(systemName: "waveform")
+                .font(.system(size: 16))
+                .foregroundColor(isSelf ? .white : .chatGreen)
+            Text(AppConfig.durationText(message.duration))
+                .font(.system(size: 13))
+                .foregroundColor(isSelf ? .white : .primary)
         }
-        .buttonStyle(PlainButtonStyle())
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(isSelf ? Color.chatGreen : Color.bubbleGray)
+        .cornerRadius(14)
+        .onTapGesture { onTapVoice(message) }
     }
 }
 

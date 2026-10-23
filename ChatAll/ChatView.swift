@@ -28,6 +28,10 @@ struct ChatView: View {
     @State private var sending = false
     @StateObject private var recorder = VoiceRecorder()
     @State private var inputFocused = false
+    /// 用户是否仍按住录音键（用于解决异步 start 与同步 end 的竞态：
+    /// 快速点击时 onEnded 先于 recorder.start() 执行，isRecording 仍为 false，
+    /// endRecord 会提前 return，导致录音启动后永远无法停止。）
+    @State private var isPressing = false
 
     /// 每个图片 URL 对应气泡在屏幕上的 frame（用于展开过渡）
     @State private var imageFrames: [URL: CGRect] = [:]
@@ -69,6 +73,11 @@ struct ChatView: View {
             .onDisappear {
                 store.closeConversation(peerId: peerId)
                 recorder.stopPlay()
+                // 离开页面时若还在录音，立即停止并丢弃（不发送）
+                if recorder.isRecording {
+                    isPressing = false
+                    _ = recorder.stop()
+                }
             }
             .sheet(isPresented: $showPhotoPicker) {
                 PhotoPicker { images in
@@ -267,12 +276,8 @@ struct ChatView: View {
             ChatInputField(text: $inputText,
                            isFocused: $inputFocused,
                            onSend: sendText)
-<<<<<<< HEAD
                 .frame(maxWidth: .infinity)
                 .frame(height: 34)
-=======
-                .frame(maxWidth: .infinity, minHeight: 34, maxHeight: 34)
->>>>>>> 746695ae677e39468ecbff04e5850aa80090f6b6
 
             if inputText.trimmingCharacters(in: .whitespaces).isEmpty {
                 // 按住录音
@@ -411,22 +416,38 @@ struct ChatView: View {
     // MARK: - 录音
 
     private func beginRecord() {
+        isPressing = true
         Task { @MainActor in
             let ok = await recorder.requestPermission()
             guard ok else {
                 store.errorMessage = "没有麦克风权限"
+                isPressing = false
                 return
             }
             do {
                 try recorder.start()
+                // 权限申请 + start 是异步的，用户可能在它完成前就已松手。
+                // 若已松手，立刻收尾（时长不足 1 秒会被丢弃，不会误发）。
+                if !isPressing {
+                    finishRecording()
+                }
             } catch {
                 store.errorMessage = "录音失败"
+                isPressing = false
             }
         }
     }
 
     private func endRecord() {
+        isPressing = false
+        // 若录音尚未真正启动（异步权限/start 未完成），这里直接返回；
+        // beginRecord 的 Task 在 start 完成后会通过 isPressing == false 触发 finishRecording。
         guard recorder.isRecording else { return }
+        finishRecording()
+    }
+
+    /// 停止录音并发送（时长不足 1 秒则丢弃）
+    private func finishRecording() {
         let duration = recorder.seconds
         guard let url = recorder.stop(), duration >= 1 else {
             return
@@ -508,13 +529,9 @@ private struct ChatInputField: UIViewRepresentable {
         field.text = text
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-<<<<<<< HEAD
         // 垂直方向固定按内容高度，避免 SwiftUI 把输入框拉满剩余空间
         field.setContentHuggingPriority(.required, for: .vertical)
         field.setContentCompressionResistancePriority(.required, for: .vertical)
-=======
-        field.setContentHuggingPriority(.required, for: .vertical)
->>>>>>> 746695ae677e39468ecbff04e5850aa80090f6b6
         field.addTarget(context.coordinator,
                         action: #selector(Coordinator.textChanged(_:)),
                         for: .editingChanged)

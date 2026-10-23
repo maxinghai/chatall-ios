@@ -2,11 +2,12 @@
 //  MainView.swift
 //  ChatAll
 //
-//  底部三标签（聊天 / 群组 / 我）+ 右上角铃铛（新的朋友）与"+"菜单
+//  底部悬浮导航栏（会话 / 中间动态快捷按钮 / 我）+ 右上角铃铛（新的朋友）
 //  + 好友 contextMenu（设置备注 / 删除好友）+ 未读红点角标 + 在线小绿点。
 //
 
 import SwiftUI
+import UIKit
 
 struct MainView: View {
     @EnvironmentObject var store: AppStore
@@ -16,6 +17,11 @@ struct MainView: View {
     @State private var showCreateGroup = false
     @State private var showPending = false
     @State private var remarkTarget: FriendItem? = nil
+    @State private var showQuickActions = false
+    @State private var centerPulse = false
+
+    /// 悬浮底栏占用的高度（内容区需要留白，避免被遮挡）
+    private let bottomBarSpace: CGFloat = 86
 
     private var tabTitle: String {
         tab == 0 ? "会话" : "我"
@@ -40,9 +46,6 @@ struct MainView: View {
                     }
                     ToolbarItem(placement: .navigationBarTrailing) {
                         pendingButton
-                    }
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        plusMenu
                     }
                 }
                 .overlay(alignment: .bottom) { bottomBar }
@@ -126,33 +129,13 @@ struct MainView: View {
         .buttonStyle(PlainButtonStyle())
     }
 
-    // MARK: - 右上角 "+" 菜单
-
-    private var plusMenu: some View {
-        Menu {
-            Button {
-                showSearch = true
-            } label: {
-                Label("搜索加好友", systemImage: "person.badge.plus")
-            }
-            Button {
-                showCreateGroup = true
-            } label: {
-                Label("发起群聊", systemImage: "person.3")
-            }
-        } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 18, weight: .medium))
-        }
-    }
-
     // MARK: - 内容
 
     @ViewBuilder
     private var content: some View {
         switch tab {
         case 0: conversationList
-        default: ProfileView().padding(.bottom, 56)
+        default: ProfileView().padding(.bottom, bottomBarSpace)
         }
     }
 
@@ -254,7 +237,7 @@ struct MainView: View {
         }
         .listStyle(PlainListStyle())
         .liquidGlassList(opacity: store.backgroundOpacity)
-        .padding(.bottom, 56)
+        .padding(.bottom, bottomBarSpace)
     }
 
     /// 列表行右侧的「时间 + 未读数」列
@@ -282,18 +265,153 @@ struct MainView: View {
             .clipShape(Capsule())
     }
 
-    // MARK: - 底部标签栏
+    // MARK: - 悬浮底部导航栏
 
     private var bottomBar: some View {
-        HStack(spacing: 0) {
-            tabButton(index: 0, title: "会话", icon: "message", badgeCount: totalUnread)
-            tabButton(index: 1, title: "我", icon: "person", badgeCount: 0)
+        ZStack(alignment: .bottom) {
+            if showQuickActions {
+                Color.black.opacity(0.18)
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture { closeQuickActions() }
+                    .transition(.opacity)
+            }
+
+            VStack(spacing: 12) {
+                if showQuickActions {
+                    quickActionPanel
+                        .transition(.scale(scale: 0.6, anchor: .bottom).combined(with: .opacity))
+                }
+                barContent
+            }
+            .padding(.bottom, 6)
+            .animation(.spring(response: 0.36, dampingFraction: 0.8), value: showQuickActions)
         }
-        .padding(.top, 6)
-        .padding(.bottom, 2)
-        .background(Rectangle().fill(.ultraThinMaterial))
-        .overlay(alignment: .top) {
-            Divider()
+    }
+
+    private var barContent: some View {
+        HStack(spacing: 0) {
+            tabButton(index: 0, title: "会话",
+                      icon: "bubble.left.and.bubble.right",
+                      selectedIcon: "bubble.left.and.bubble.right.fill",
+                      badgeCount: totalUnread)
+            centerButton
+                .frame(width: 78)
+            tabButton(index: 1, title: "我",
+                      icon: "person",
+                      selectedIcon: "person.fill",
+                      badgeCount: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
+        .background(
+            ZStack {
+                Capsule().fill(.ultraThinMaterial)
+                Capsule().fill(Color(.systemBackground).opacity(store.backgroundOpacity * 0.55))
+            }
+        )
+        .overlay(
+            Capsule().stroke(
+                LinearGradient(colors: [.white.opacity(0.5), .white.opacity(0.05)],
+                               startPoint: .top, endPoint: .bottom),
+                lineWidth: 0.8
+            )
+        )
+        .shadow(color: .black.opacity(0.13), radius: 18, y: 6)
+        .padding(.horizontal, 20)
+    }
+
+    /// 中间动态按钮：呼吸光环 + 点击旋转展开快捷操作
+    private var centerButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            if showQuickActions {
+                closeQuickActions()
+            } else {
+                withAnimation(.spring(response: 0.36, dampingFraction: 0.8)) {
+                    showQuickActions = true
+                }
+            }
+        } label: {
+            ZStack {
+                if !showQuickActions {
+                    Circle()
+                        .stroke(Color.chatGreen.opacity(0.38), lineWidth: 2)
+                        .frame(width: 54, height: 54)
+                        .scaleEffect(centerPulse ? 1.35 : 1)
+                        .opacity(centerPulse ? 0 : 0.75)
+                }
+                Circle()
+                    .fill(
+                        LinearGradient(colors: [Color(red: 0.09, green: 0.86, blue: 0.46),
+                                                Color(red: 0.01, green: 0.62, blue: 0.33)],
+                                       startPoint: .topLeading, endPoint: .bottomTrailing)
+                    )
+                    .frame(width: 54, height: 54)
+                    .shadow(color: Color.chatGreen.opacity(0.45), radius: 10, y: 4)
+                Image(systemName: "plus")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundColor(.white)
+                    .rotationEffect(.degrees(showQuickActions ? 45 : 0))
+            }
+            .frame(width: 76, height: 62)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onAppear {
+            withAnimation(.easeOut(duration: 1.8).repeatForever(autoreverses: false)) {
+                centerPulse = true
+            }
+        }
+        .accessibilityLabel(showQuickActions ? "收起快捷操作" : "快捷操作")
+    }
+
+    private var quickActionPanel: some View {
+        HStack(spacing: 10) {
+            quickActionButton(title: "加好友", icon: "person.badge.plus", tint: .blue) {
+                closeQuickActions()
+                showSearch = true
+            }
+            quickActionButton(title: "发起群聊", icon: "person.3.fill", tint: .orange) {
+                closeQuickActions()
+                showCreateGroup = true
+            }
+        }
+        .padding(8)
+        .background(
+            ZStack {
+                Capsule().fill(.ultraThinMaterial)
+                Capsule().fill(Color(.systemBackground).opacity(store.backgroundOpacity * 0.6))
+            }
+        )
+        .overlay(Capsule().stroke(Color.white.opacity(0.3), lineWidth: 0.8))
+        .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+    }
+
+    private func quickActionButton(title: String, icon: String, tint: Color,
+                                   action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 15, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 14, weight: .medium))
+            }
+            .foregroundColor(tint)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(Capsule().fill(tint.opacity(0.14)))
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    private func closeQuickActions() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
+            showQuickActions = false
         }
     }
 
@@ -301,30 +419,42 @@ struct MainView: View {
         store.unreadCounts.values.reduce(0, +)
     }
 
-    private func tabButton(index: Int, title: String, icon: String, badgeCount: Int) -> some View {
-        Button {
-            tab = index
+    private func tabButton(index: Int, title: String, icon: String,
+                           selectedIcon: String, badgeCount: Int) -> some View {
+        let selected = tab == index
+        return Button {
+            guard !selected else { return }
+            UISelectionFeedbackGenerator().selectionChanged()
+            withAnimation(.easeInOut(duration: 0.2)) { tab = index }
         } label: {
             VStack(spacing: 3) {
                 ZStack(alignment: .topTrailing) {
-                    Image(systemName: icon)
-                        .font(.system(size: 20))
+                    Image(systemName: selected ? selectedIcon : icon)
+                        .font(.system(size: 20, weight: selected ? .semibold : .regular))
+                        .frame(height: 22)
                     if badgeCount > 0 {
                         Text(badgeCount > 99 ? "99+" : "\(badgeCount)")
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.system(size: 10, weight: .semibold))
                             .foregroundColor(.white)
                             .padding(.horizontal, 4)
                             .frame(minWidth: 16, minHeight: 16)
                             .background(Color.red)
                             .clipShape(Capsule())
-                            .offset(x: 12, y: -8)
+                            .overlay(Capsule().stroke(Color(.systemBackground).opacity(0.8), lineWidth: 1))
+                            .offset(x: 11, y: -6)
                     }
                 }
                 Text(title)
-                    .font(.system(size: 11))
+                    .font(.system(size: 11, weight: selected ? .semibold : .regular))
             }
-            .foregroundColor(tab == index ? .chatGreen : .gray)
+            .foregroundColor(selected ? .chatGreen : .gray)
             .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.chatGreen.opacity(selected ? 0.13 : 0))
+            )
+            .scaleEffect(selected ? 1 : 0.96)
         }
         .buttonStyle(PlainButtonStyle())
     }

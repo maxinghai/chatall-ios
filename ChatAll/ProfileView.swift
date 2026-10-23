@@ -26,6 +26,8 @@ struct ProfileView: View {
 
     /// 聊天背景设置
     @State private var bgPickerItem: PhotosPickerItem?
+    @State private var cropImage: UIImage?   // 待裁剪的原图
+    @State private var showCrop = false      // 是否显示裁剪页
     @State private var bgOpacity: Double = AppConfig.backgroundOpacity
 
     var body: some View {
@@ -214,8 +216,24 @@ struct ProfileView: View {
                 if let item,
                    let data = try? await item.loadTransferable(type: Data.self),
                    let image = UIImage(data: data) {
-                    store.setBackgroundImage(image)
+                    // 选完图先进入裁剪，不直接保存
+                    cropImage = image
+                    showCrop = true
                 }
+            }
+        }
+        .fullScreenCover(isPresented: $showCrop) {
+            if let image = cropImage {
+                ImageCropView(image: image,
+                              onCancel: {
+                                  cropImage = nil
+                                  showCrop = false
+                              },
+                              onComplete: { cropped in
+                                  cropImage = nil
+                                  showCrop = false
+                                  store.setBackgroundImage(cropped)
+                              })
             }
         }
         .onAppear {

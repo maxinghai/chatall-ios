@@ -846,18 +846,25 @@ struct LiquidGlassOverlay: View {
 }
 
 /// 把 List/Form 变成"透明底色 + 玻璃材质"的修饰器
-/// 用法：list.liquidGlassBackground(opacity: store.backgroundOpacity)
+/// 用法：list.liquidGlassList(opacity: store.backgroundOpacity)
+/// opacity 越高 = 叠加的不透明涂层越厚 = 背景图越不容易透出来
 struct LiquidGlassListModifier: ViewModifier {
     let opacity: Double
     func body(content: Content) -> some View {
         content
-            .scrollContentBackground(.hidden)
-            .background(
-                ZStack {
-                    Rectangle().fill(.thinMaterial)
-                    Color(.systemBackground).opacity(opacity)
-                }
-            )
+            .scrollContentBackground(.hidden)     // 隐藏 List 默认的整块白底
+            .listRowBackground(Color.clear)       // 隐藏每一行自己的白底（关键！）
+            .background(glassOverlay(opacity: opacity))
+    }
+
+    @ViewBuilder
+    private func glassOverlay(opacity: Double) -> some View {
+        // Material 本身就是玻璃模糊，后面叠一个可调不透明度的同色涂层
+        ZStack {
+            Rectangle().fill(.ultraThinMaterial)
+            // opacity 默认 0.55 比较通透；用户滑块范围 0.15~0.95
+            Color(.systemBackground).opacity(opacity * 0.6)
+        }
     }
 }
 

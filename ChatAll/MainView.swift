@@ -291,12 +291,7 @@ struct MainView: View {
         }
         .padding(.top, 6)
         .padding(.bottom, 2)
-        .background(
-            ZStack {
-                Rectangle().fill(.ultraThinMaterial)
-                Color(.systemBackground).opacity(store.backgroundOpacity)
-            }
-        )
+        .background(Rectangle().fill(.ultraThinMaterial))
         .overlay(alignment: .top) {
             Divider()
         }

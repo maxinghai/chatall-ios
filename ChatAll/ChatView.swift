@@ -167,10 +167,7 @@ struct ChatView: View {
                 .padding(.horizontal, 12)
             }
             .background(
-                ZStack {
-                    Rectangle().fill(.thinMaterial)
-                    Color(.systemGroupedBackground).opacity(store.backgroundOpacity)
-                }
+                Rectangle().fill(.thinMaterial)
             )
             .contentShape(Rectangle())
             .onTapGesture { inputFocused = false }
@@ -235,12 +232,7 @@ struct ChatView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
             .padding(.top, topPad)
-            .background(
-                ZStack {
-                    Rectangle().fill(.ultraThinMaterial)
-                    Color(.systemBackground).opacity(0.55)
-                }
-            )
+            .background(Rectangle().fill(.ultraThinMaterial))
             .cornerRadius(4)
             .frame(maxWidth: .infinity)
     }
@@ -318,12 +310,7 @@ struct ChatView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(
-            ZStack {
-                Rectangle().fill(.ultraThinMaterial)
-                Color(.systemBackground).opacity(store.backgroundOpacity)
-            }
-        )
+        .background(Rectangle().fill(.ultraThinMaterial))
     }
 
     // MARK: - 发送

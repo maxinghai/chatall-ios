@@ -120,7 +120,7 @@ struct ProfileView: View {
                         .font(.system(size: 13))
                         .foregroundColor(.gray)
                 }
-                Slider(value: $bgOpacity, in: 0.3...0.95, step: 0.05)
+                Slider(value: $bgOpacity, in: 0.15...0.95, step: 0.05)
                     .onChange(of: bgOpacity) { newValue in
                         store.setBackgroundOpacity(newValue)
                     }

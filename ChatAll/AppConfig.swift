@@ -157,9 +157,9 @@ enum AppConfig {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
-    /// 玻璃叠加层的不透明度：1.0 = 完全不透明；0.3 = 高度通透（默认 0.85）
+    /// 玻璃叠加层的不透明度：值越大底色越厚，背景图越不透。默认 0.55（比较通透）
     static var backgroundOpacity: Double {
-        get { UserDefaults.standard.object(forKey: bgOpacityKey) as? Double ?? 0.85 }
+        get { UserDefaults.standard.object(forKey: bgOpacityKey) as? Double ?? 0.55 }
         set { UserDefaults.standard.set(newValue, forKey: bgOpacityKey) }
     }
 

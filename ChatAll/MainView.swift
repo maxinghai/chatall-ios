@@ -305,20 +305,20 @@ struct MainView: View {
         .padding(.horizontal, 8)
         .padding(.top, 8)
         .padding(.bottom, 6)
-        .background(
-            ZStack {
-                Capsule().fill(.ultraThinMaterial)
-                Capsule().fill(Color(.systemBackground).opacity(store.backgroundOpacity * 0.55))
+        .liquidGlassBar(opacity: store.backgroundOpacity)
+        .overlay {
+            // 原生液态玻璃（iOS 26+）自带高光描边与投影，低版本才手动补
+            if !supportsNativeLiquidGlass {
+                Capsule().stroke(
+                    LinearGradient(colors: [.white.opacity(0.5), .white.opacity(0.05)],
+                                   startPoint: .top, endPoint: .bottom),
+                    lineWidth: 0.8
+                )
             }
-        )
-        .overlay(
-            Capsule().stroke(
-                LinearGradient(colors: [.white.opacity(0.5), .white.opacity(0.05)],
-                               startPoint: .top, endPoint: .bottom),
-                lineWidth: 0.8
-            )
-        )
-        .shadow(color: .black.opacity(0.13), radius: 18, y: 6)
+        }
+        .shadow(color: supportsNativeLiquidGlass ? .clear : .black.opacity(0.13),
+                radius: supportsNativeLiquidGlass ? 0 : 18,
+                y: supportsNativeLiquidGlass ? 0 : 6)
         .padding(.horizontal, 20)
     }
 
@@ -379,14 +379,15 @@ struct MainView: View {
             }
         }
         .padding(8)
-        .background(
-            ZStack {
-                Capsule().fill(.ultraThinMaterial)
-                Capsule().fill(Color(.systemBackground).opacity(store.backgroundOpacity * 0.6))
+        .liquidGlassBar(opacity: store.backgroundOpacity)
+        .overlay {
+            if !supportsNativeLiquidGlass {
+                Capsule().stroke(Color.white.opacity(0.3), lineWidth: 0.8)
             }
-        )
-        .overlay(Capsule().stroke(Color.white.opacity(0.3), lineWidth: 0.8))
-        .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+        }
+        .shadow(color: supportsNativeLiquidGlass ? .clear : .black.opacity(0.12),
+                radius: supportsNativeLiquidGlass ? 0 : 12,
+                y: supportsNativeLiquidGlass ? 0 : 4)
     }
 
     private func quickActionButton(title: String, icon: String, tint: Color,

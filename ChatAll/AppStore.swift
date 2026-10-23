@@ -638,6 +638,11 @@ final class AppStore: ObservableObject {
         if let idx = list.firstIndex(where: { $0.msgId == msg.msgId }) {
             list[idx].localState = 1
             if msg.id > 0 { list[idx].id = msg.id }
+            // ACK 里若已带服务端已读态（重发幂等命中旧消息），同步显示
+            if (msg.status ?? 0) >= 2 {
+                list[idx].status = 2
+                list[idx].readByPeer = true
+            }
             messagesByPeer[key] = list
             // 回写本地（更新发送态）
             MessageStore.save(peerId: key, messages: list)
@@ -938,4 +943,49 @@ extension View {
     func liquidGlassList(opacity: Double) -> some View {
         modifier(LiquidGlassListModifier(opacity: opacity))
     }
+}
+
+// MARK: - 液态玻璃栏（胶囊形，用于底部导航 / 快捷操作面板）
+
+/// 胶囊形液态玻璃背景修饰器。
+/// - iOS 26+：使用原生 `.glassEffect()` 液态玻璃效果（含系统自带的高光描边与投影）。
+/// - iOS 16~25：回退到 `.ultraThinMaterial` + 系统底色叠加，保持通透观感。
+///
+/// 用法：`barContent.liquidGlassBar(opacity: store.backgroundOpacity)`
+struct LiquidGlassBarModifier: ViewModifier {
+    let opacity: Double
+
+    func body(content: Content) -> some View {
+        content
+            .background { barBackground }
+    }
+
+    @ViewBuilder
+    private var barBackground: some View {
+        if #available(iOS 26.0, *) {
+            // 原生液态玻璃：填充胶囊底色后叠加 glassEffect，
+            // 系统会自动渲染折射高光与柔和投影，无需手动加 border/shadow。
+            Capsule()
+                .fill(.background)
+                .glassEffect()
+        } else {
+            ZStack {
+                Capsule().fill(.ultraThinMaterial)
+                Capsule().fill(Color(.systemBackground).opacity(opacity * 0.55))
+            }
+        }
+    }
+}
+
+extension View {
+    func liquidGlassBar(opacity: Double) -> some View {
+        modifier(LiquidGlassBarModifier(opacity: opacity))
+    }
+}
+
+/// 是否支持原生液态玻璃（iOS 26+）。
+/// 用于在调用处决定是否还要叠加自定义描边/阴影（原生 glassEffect 已自带）。
+var supportsNativeLiquidGlass: Bool {
+    if #available(iOS 26.0, *) { return true }
+    return false
 }

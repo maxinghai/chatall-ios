@@ -138,29 +138,38 @@ struct ImageCropView: View {
         let ih = image.size.height
         guard iw > 0, ih > 0 else { return image }
 
-        // 以屏幕比例 aspectFill 裁剪，裁出中间区域
+        // 以屏幕比例 aspectFill 裁剪，裁出中间区域（UIImage 坐标系：左上为原点）
         let screenRatio = screenSize.width / screenSize.height
         let imgRatio = iw / ih
-        let drawRect: CGRect
+        let cropRect: CGRect
         if imgRatio > screenRatio {
             // 图片更宽，裁掉左右
             let w = ih * screenRatio
-            drawRect = CGRect(x: (iw - w) / 2, y: 0, width: w, height: ih)
+            cropRect = CGRect(x: (iw - w) / 2, y: 0, width: w, height: ih)
         } else {
             // 图片更高，裁掉上下
             let h = iw / screenRatio
-            drawRect = CGRect(x: 0, y: (ih - h) / 2, width: iw, height: h)
+            cropRect = CGRect(x: 0, y: (ih - h) / 2, width: iw, height: h)
         }
 
-        // 渲染到屏幕像素尺寸（@2x/@3x 清晰）
+        // 先用 cgImage.cropping(to:) 裁出中间区域（注意 CGImage 坐标系是左下原点，需要翻转 y）
+        guard let cgImage = image.cgImage else { return image }
+        let cgCropRect = CGRect(
+            x: cropRect.minX * image.scale,
+            y: (ih - cropRect.maxY) * image.scale,
+            width: cropRect.width * image.scale,
+            height: cropRect.height * image.scale
+        )
+        guard let croppedCG = cgImage.cropping(to: cgCropRect) else { return image }
+        let cropped = UIImage(cgImage: croppedCG, scale: image.scale, orientation: image.imageOrientation)
+
+        // 再缩放到屏幕像素尺寸（@2x/@3x 清晰）
         let scale = UIScreen.main.scale
         let targetSize = CGSize(width: screenSize.width * scale,
                                 height: screenSize.height * scale)
         let renderer = UIGraphicsImageRenderer(size: targetSize)
         return renderer.image { _ in
-            image.draw(in: CGRect(origin: .zero, size: targetSize),
-                       from: drawRect,
-                       fraction: 1.0)
+            cropped.draw(in: CGRect(origin: .zero, size: targetSize))
         }
     }
 }

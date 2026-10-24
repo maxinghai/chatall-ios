@@ -482,40 +482,49 @@ struct PendingRequestsSheet: View {
 
     var body: some View {
         NavigationView {
-            List {
-                if store.pendingRequests.isEmpty {
-                    Text("暂无新的好友申请")
-                        .foregroundColor(.gray)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.top, 40)
-                }
-                ForEach(store.pendingRequests) { req in
-                    HStack(spacing: 12) {
-                        AvatarView(name: req.displayName, avatar: "", size: 44)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(req.displayName)
-                                .font(.system(size: 16))
-                            Text(req.msg.isEmpty ? "请求添加你为好友" : req.msg)
-                                .font(.system(size: 13))
+            ZStack {
+                ChatBackgroundImageView()
+
+                // 与主页一致：用 ScrollView 手动排版，每行一层圆角矩形液态玻璃
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        if store.pendingRequests.isEmpty {
+                            Text("暂无新的好友申请")
                                 .foregroundColor(.gray)
-                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.top, 40)
                         }
-                        Spacer()
-                        Button("接受") {
-                            Task { await store.handleRequest(req, accept: true) }
+                        ForEach(store.pendingRequests) { req in
+                            HStack(spacing: 12) {
+                                AvatarView(name: req.displayName, avatar: "", size: 44)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(req.displayName)
+                                        .font(.system(size: 16))
+                                    Text(req.msg.isEmpty ? "请求添加你为好友" : req.msg)
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.gray)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                Button("接受") {
+                                    Task { await store.handleRequest(req, accept: true) }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(Color.chatGreen)
+                                Button("拒绝") {
+                                    Task { await store.handleRequest(req, accept: false) }
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                            .padding(12)
+                            .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(Color.chatGreen)
-                        Button("拒绝") {
-                            Task { await store.handleRequest(req, accept: false) }
-                        }
-                        .buttonStyle(.bordered)
                     }
-                    .padding(12)
-                    .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                    .padding(.bottom, 20)
                 }
             }
-            .liquidGlassList(opacity: store.backgroundOpacity)
             .navigationBarTitle("新的朋友", displayMode: .inline)
             .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
@@ -541,49 +550,63 @@ struct SearchUserSheet: View {
 
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                HStack(spacing: 8) {
-                    TextField("输入用户名/昵称搜索", text: $keyword)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .autocapitalization(.none)
-                        .disableAutocorrection(true)
-                    Button("搜索") { doSearch() }
-                        .foregroundColor(.chatGreen)
-                }
-                .padding()
+            ZStack {
+                ChatBackgroundImageView()
 
-                List {
-                    ForEach(results) { user in
-                        HStack(spacing: 12) {
-                            AvatarView(name: user.displayName, avatar: user.avatar, size: 44)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(user.displayName).font(.system(size: 16))
-                                Text("@\(user.username)").font(.system(size: 12)).foregroundColor(.gray)
+                VStack(spacing: 0) {
+                    HStack(spacing: 8) {
+                        TextField("输入用户名/昵称搜索", text: $keyword)
+                            .autocapitalization(.none)
+                            .disableAutocorrection(true)
+                            .padding(12)
+                            .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 12)
+                        Button("搜索") { doSearch() }
+                            .foregroundColor(.chatGreen)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+
+                    ScrollView {
+                        LazyVStack(spacing: 10) {
+                            ForEach(results) { user in
+                                HStack(spacing: 12) {
+                                    AvatarView(name: user.displayName, avatar: user.avatar, size: 44)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(user.displayName).font(.system(size: 16))
+                                        Text("@\(user.username)").font(.system(size: 12)).foregroundColor(.gray)
+                                    }
+                                    Spacer()
+                                    Button("添加") {
+                                        Task { await store.addFriend(toId: user.id, msg: messageText) }
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .tint(Color.chatGreen)
+                                }
+                                .padding(12)
+                                .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                             }
-                            Spacer()
-                            Button("添加") {
-                                Task { await store.addFriend(toId: user.id, msg: messageText) }
+                            if searched && results.isEmpty {
+                                Text("没有找到用户")
+                                    .foregroundColor(.gray)
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                    .padding(.top, 20)
                             }
-                            .buttonStyle(.bordered)
-                            .tint(Color.chatGreen)
                         }
-                        .padding(12)
-                        .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
                     }
-                    if searched && results.isEmpty {
-                        Text("没有找到用户").foregroundColor(.gray)
-                    }
-                }
-                .liquidGlassList(opacity: store.backgroundOpacity)
 
-                HStack {
-                    Text("验证消息")
-                        .font(.system(size: 14))
-                        .foregroundColor(.gray)
-                    TextField("验证消息", text: $messageText)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                    HStack(spacing: 8) {
+                        Text("验证消息")
+                            .font(.system(size: 14))
+                            .foregroundColor(.gray)
+                        TextField("验证消息", text: $messageText)
+                            .padding(12)
+                            .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 12)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
                 }
-                .padding()
             }
             .navigationBarTitle("添加好友", displayMode: .inline)
             .toolbarBackground(.hidden, for: .navigationBar)
@@ -618,40 +641,53 @@ struct CreateGroupSheet: View {
 
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                HStack {
-                    Text("群名称")
-                        .font(.system(size: 15))
-                        .foregroundColor(.gray)
-                        .frame(width: 70, alignment: .leading)
-                    TextField("请输入群名称", text: $name)
-                }
-                .padding()
+            ZStack {
+                ChatBackgroundImageView()
 
-                Text("选择成员（\(selected.count)）")
-                    .font(.system(size: 13))
-                    .foregroundColor(.gray)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal)
-
-                List {
-                    ForEach(store.friends) { friend in
-                        Button {
-                            toggle(friend.id)
-                        } label: {
-                            HStack(spacing: 12) {
-                                AvatarView(name: friend.displayName, avatar: friend.avatar, size: 40)
-                                Text(friend.displayName).foregroundColor(.primary)
-                                Spacer()
-                                Image(systemName: selected.contains(friend.id) ? "checkmark.circle.fill" : "circle")
-                                    .foregroundColor(selected.contains(friend.id) ? .chatGreen : .gray)
-                            }
+                VStack(spacing: 0) {
+                    HStack(spacing: 8) {
+                        Text("群名称")
+                            .font(.system(size: 15))
+                            .foregroundColor(.gray)
+                            .frame(width: 70, alignment: .leading)
+                        TextField("请输入群名称", text: $name)
                             .padding(12)
-                            .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
+                            .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 12)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+
+                    Text("选择成员（\(selected.count)）")
+                        .font(.system(size: 13))
+                        .foregroundColor(.gray)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                        .padding(.bottom, 8)
+
+                    ScrollView {
+                        LazyVStack(spacing: 10) {
+                            ForEach(store.friends) { friend in
+                                Button {
+                                    toggle(friend.id)
+                                } label: {
+                                    HStack(spacing: 12) {
+                                        AvatarView(name: friend.displayName, avatar: friend.avatar, size: 40)
+                                        Text(friend.displayName).foregroundColor(.primary)
+                                        Spacer()
+                                        Image(systemName: selected.contains(friend.id) ? "checkmark.circle.fill" : "circle")
+                                            .foregroundColor(selected.contains(friend.id) ? .chatGreen : .gray)
+                                    }
+                                    .padding(12)
+                                    .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 20)
                     }
                 }
-                .liquidGlassList(opacity: store.backgroundOpacity)
             }
             .navigationBarTitle("发起群聊", displayMode: .inline)
             .toolbarBackground(.hidden, for: .navigationBar)
@@ -695,21 +731,31 @@ struct RemarkSheet: View {
 
     var body: some View {
         NavigationView {
-            Form {
-                Section(header: Text("备注名")) {
-                    TextField("给 \(friend.displayName) 设置备注", text: $remark)
-                        .padding(14)
-                        .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
-                }
-                Section {
-                    Text("备注仅自己可见")
-                        .font(.system(size: 12))
-                        .foregroundColor(.gray)
-                        .padding(14)
-                        .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
+            ZStack {
+                ChatBackgroundImageView()
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("备注名")
+                            .font(.system(size: 13))
+                            .foregroundColor(.gray)
+                            .padding(.leading, 4)
+                        TextField("给 \(friend.displayName) 设置备注", text: $remark)
+                            .padding(14)
+                            .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
+                        Text("备注仅自己可见")
+                            .font(.system(size: 12))
+                            .foregroundColor(.gray)
+                            .padding(14)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
+                            .padding(.top, 8)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                    .padding(.bottom, 20)
                 }
             }
-            .liquidGlassList(opacity: store.backgroundOpacity)
             .navigationBarTitle("设置备注", displayMode: .inline)
             .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {

@@ -1006,29 +1006,7 @@ struct LiquidGlassOverlay: View {
     }
 }
 
-/// 把 List/Form 变成"液态玻璃"的修饰器
-/// - 用 PlainListStyle 避免系统分组卡片自带的不透明白底盖住背景图
-/// - 行背景设为透明，玻璃卡片由各页面行内容通过 .liquidGlass(...) 自行添加
-///   （iOS 26 的 List 会覆盖 listRowBackground，直接在行内容加背景最可靠）
-/// opacity 越高 = 玻璃越"厚"，背景图越不透；用户滑块范围 0.15~0.95
-struct LiquidGlassListModifier: ViewModifier {
-    let opacity: Double
-
-    func body(content: Content) -> some View {
-        content
-            .listStyle(PlainListStyle())
-            .scrollContentBackground(.hidden)
-            .listRowSeparator(.hidden)
-            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-            .listRowBackground(Color.clear)
-    }
-}
-
 extension View {
-    func liquidGlassList(opacity: Double) -> some View {
-        modifier(LiquidGlassListModifier(opacity: opacity))
-    }
-
     /// 通用液态玻璃背景（圆角矩形）
     func liquidGlass(opacity: Double, cornerRadius: CGFloat = 12) -> some View {
         modifier(LiquidGlassModifier(opacity: opacity, cornerRadius: cornerRadius))

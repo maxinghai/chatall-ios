@@ -19,7 +19,6 @@ struct MainView: View {
     @State private var showPending = false
     @State private var remarkTarget: FriendItem? = nil
     @State private var showMoments = false
-    @State private var centerPulse = false
 
     /// 悬浮底栏占用的高度（内容区需要留白，避免被遮挡）
     private let bottomBarSpace: CGFloat = 86
@@ -306,7 +305,7 @@ struct MainView: View {
                       icon: "bubble.left.and.bubble.right",
                       selectedIcon: "bubble.left.and.bubble.right.fill",
                       badgeCount: totalUnread)
-            centerButton
+            CenterButton(showMoments: $showMoments)
                 .frame(width: 78)
             tabButton(index: 1, title: "我",
                       icon: "person",
@@ -334,39 +333,43 @@ struct MainView: View {
     }
 
     /// 中间动态按钮：呼吸光环 + 点击打开动态页（全屏覆盖，屏蔽其他按钮）
-    private var centerButton: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            showMoments = true
-        } label: {
-            ZStack {
-                Circle()
-                    .stroke(Color.chatGreen.opacity(0.38), lineWidth: 2)
-                    .frame(width: 54, height: 54)
-                    .scaleEffect(centerPulse ? 1.35 : 1)
-                    .opacity(centerPulse ? 0 : 0.75)
-                Circle()
-                    .fill(
-                        LinearGradient(colors: [Color(red: 0.09, green: 0.86, blue: 0.46),
-                                                Color(red: 0.01, green: 0.62, blue: 0.33)],
-                                       startPoint: .topLeading, endPoint: .bottomTrailing)
-                    )
-                    .frame(width: 54, height: 54)
-                    .shadow(color: Color.chatGreen.opacity(0.45), radius: 10, y: 4)
-                Image(systemName: "sparkles")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundColor(.white)
+    /// 呼吸动画状态封装在子视图内部，避免触发 MainView 整体重绘导致导航栏图标位移
+    private struct CenterButton: View {
+        @Binding var showMoments: Bool
+        @State private var pulse = false
+
+        var body: some View {
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                showMoments = true
+            } label: {
+                ZStack {
+                    Circle()
+                        .stroke(Color.chatGreen.opacity(0.38), lineWidth: 2)
+                        .frame(width: 54, height: 54)
+                        .scaleEffect(pulse ? 1.35 : 1)
+                        .opacity(pulse ? 0 : 0.75)
+                        .animation(.easeOut(duration: 1.8).repeatForever(autoreverses: false),
+                                   value: pulse)
+                    Circle()
+                        .fill(
+                            LinearGradient(colors: [Color(red: 0.09, green: 0.86, blue: 0.46),
+                                                    Color(red: 0.01, green: 0.62, blue: 0.33)],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing)
+                        )
+                        .frame(width: 54, height: 54)
+                        .shadow(color: Color.chatGreen.opacity(0.45), radius: 10, y: 4)
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+                .frame(width: 76, height: 62)
+                .contentShape(Rectangle())
             }
-            .frame(width: 76, height: 62)
-            .contentShape(Rectangle())
+            .buttonStyle(PlainButtonStyle())
+            .onAppear { pulse = true }
+            .accessibilityLabel("动态")
         }
-        .buttonStyle(PlainButtonStyle())
-        .onAppear {
-            withAnimation(.easeOut(duration: 1.8).repeatForever(autoreverses: false)) {
-                centerPulse = true
-            }
-        }
-        .accessibilityLabel("动态")
     }
 
     private var totalUnread: Int {

@@ -360,6 +360,11 @@ final class AppStore: ObservableObject {
         return list.last
     }
 
+    /// 某个会话的最后一条消息时间（内存没有则从磁盘读取），用于列表排序
+    func lastMessageDate(for peerId: Int64) -> Date? {
+        lastMessage(peerId).flatMap { AppConfig.parseDate($0.createdAt) }
+    }
+
     /// 统一更新某个会话的最新预览 + 时间
     private func updateLastInfo(_ peerId: Int64, with msg: ChatMessage) {
         let p = previewText(msg)

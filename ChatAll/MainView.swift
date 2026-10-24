@@ -197,8 +197,7 @@ struct MainView: View {
         var rows: [ConversationRow] = []
         for f in store.friends {
             let peerId = f.id
-            let msgs = store.messages(for: peerId)
-            let lastDate = msgs.last.flatMap { AppConfig.parseDate($0.createdAt) }
+            let lastDate = store.lastMessageDate(for: peerId)
             let preview = store.lastPreviews[peerId] ?? ""
             rows.append(ConversationRow(
                 id: peerId, isGroup: false,
@@ -211,8 +210,7 @@ struct MainView: View {
         }
         for g in store.groups {
             let peerId = g.id
-            let msgs = store.messages(for: peerId)
-            let lastDate = msgs.last.flatMap { AppConfig.parseDate($0.createdAt) }
+            let lastDate = store.lastMessageDate(for: peerId)
             let preview = store.lastPreviews[peerId] ?? ""
             rows.append(ConversationRow(
                 id: peerId, isGroup: true,

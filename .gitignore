@@ -13,3 +13,23 @@ DerivedData/
 xcuserdata/
 *.xcuserdata/
 *.xcworkspace/xcuserdata/
+*.xcuserstate
+
+# IntelliJ / AppCode 等 JetBrains IDE
+.idea/
+*.iml
+
+# Swift Package Manager
+.swiftpm/
+Packages/
+
+# 日志与崩溃
+*.log
+logs_*.zip
+*.crash
+*.ips
+
+# 临时文件
+*.tmp
+*.bak
+*~

@@ -234,6 +234,34 @@ final class ApiClient {
                               body: ["userId": userId])
     }
 
+    // MARK: - 动态（朋友圈）
+
+    func momentFeed() async throws -> [MomentItem] {
+        return try await request("GET", "/api/moment/feed")
+    }
+
+    /// 发布动态；images 为 URL 字符串数组
+    func createMoment(content: String, images: [String]) async throws {
+        let imagesJSON = (try? JSONSerialization.data(withJSONObject: images))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        try await requestVoid("POST", "/api/moment/create",
+                              body: ["content": content, "images": imagesJSON])
+    }
+
+    /// 点赞 / 取消点赞，返回 true=已赞 false=已取消
+    func toggleMomentLike(momentId: Int64) async throws -> Bool {
+        return try await request("POST", "/api/moment/\(momentId)/like")
+    }
+
+    func addMomentComment(momentId: Int64, content: String) async throws {
+        try await requestVoid("POST", "/api/moment/\(momentId)/comment",
+                              body: ["content": content])
+    }
+
+    func deleteMoment(momentId: Int64) async throws {
+        try await requestVoid("DELETE", "/api/moment/\(momentId)")
+    }
+
     // MARK: - 消息
 
     func offlineMessages() async throws -> [ChatMessage] {

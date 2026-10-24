@@ -2,8 +2,9 @@
 //  MainView.swift
 //  ChatAll
 //
-//  底部悬浮导航栏（会话 / 中间动态快捷按钮 / 我）+ 右上角铃铛（新的朋友）
+//  底部悬浮导航栏（会话 / 中间动态按钮 / 我）+ 右上角（加好友 / 发起群聊 / 新的朋友铃铛）
 //  + 好友 contextMenu（设置备注 / 删除好友）+ 未读红点角标 + 在线小绿点。
+//  中间按钮点击后全屏打开动态页（屏蔽罩，其他按钮不可点）。
 //
 
 import SwiftUI
@@ -17,7 +18,7 @@ struct MainView: View {
     @State private var showCreateGroup = false
     @State private var showPending = false
     @State private var remarkTarget: FriendItem? = nil
-    @State private var showQuickActions = false
+    @State private var showMoments = false
     @State private var centerPulse = false
 
     /// 悬浮底栏占用的高度（内容区需要留白，避免被遮挡）
@@ -45,7 +46,11 @@ struct MainView: View {
                         connectionBadge
                     }
                     ToolbarItem(placement: .navigationBarTrailing) {
-                        pendingButton
+                        HStack(spacing: 18) {
+                            addFriendButton
+                            createGroupButton
+                            pendingButton
+                        }
                     }
                 }
                 .overlay(alignment: .bottom) { bottomBar }
@@ -57,6 +62,11 @@ struct MainView: View {
             .sheet(isPresented: $showPending) { PendingRequestsSheet() }
             .sheet(item: $remarkTarget) { friend in
                 RemarkSheet(friend: friend)
+            }
+            .fullScreenCover(isPresented: $showMoments) {
+                // 动态页全屏覆盖：相当于屏蔽罩，打开后屏幕其他按钮均无法点击
+                MomentsView()
+                    .environmentObject(store)
             }
             .fullScreenCover(isPresented: $store.callUIVisible, onDismiss: {
                 // 下滑返回：来电中视为拒绝；通话中则收起为悬浮小窗/悬浮电话图标，不挂断
@@ -97,12 +107,18 @@ struct MainView: View {
     private var connectionBadge: some View {
         // 导航栏左上角空间有限，iOS 26/27 的玻璃按钮会把文字截断，
         // 这里只用彩色圆点表示连接状态（绿=在线、黄=连接中、红=离线）。
-        Circle()
-            .fill(store.connectionState.color)
-            .frame(width: 10, height: 10)
-            .padding(6)
-            .animation(.easeInOut(duration: 0.2), value: store.connectionState)
-            .accessibilityLabel("连接状态：\(store.connectionState.title)")
+        // 点击圆点可手动刷新会话列表（好友 / 群组 / 未读 / 离线消息）。
+        Button {
+            Task { await store.reloadAll() }
+        } label: {
+            Circle()
+                .fill(store.connectionState.color)
+                .frame(width: 10, height: 10)
+                .padding(6)
+                .animation(.easeInOut(duration: 0.2), value: store.connectionState)
+        }
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel("连接状态：\(store.connectionState.title)，点击刷新")
     }
 
     // MARK: - 右上角铃铛（新的朋友）
@@ -127,6 +143,32 @@ struct MainView: View {
                 }
         }
         .buttonStyle(PlainButtonStyle())
+    }
+
+    // MARK: - 右上角「加好友」按钮
+
+    private var addFriendButton: some View {
+        Button {
+            showSearch = true
+        } label: {
+            Image(systemName: "person.badge.plus")
+                .font(.system(size: 17, weight: .medium))
+        }
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel("添加好友")
+    }
+
+    // MARK: - 右上角「添加群聊」按钮
+
+    private var createGroupButton: some View {
+        Button {
+            showCreateGroup = true
+        } label: {
+            Image(systemName: "person.3.fill")
+                .font(.system(size: 17, weight: .medium))
+        }
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel("发起群聊")
     }
 
     // MARK: - 内容
@@ -236,6 +278,9 @@ struct MainView: View {
             }
         }
         .listStyle(PlainListStyle())
+        .refreshable {
+            await store.reloadAll()
+        }
         .liquidGlassList(opacity: store.backgroundOpacity)
         .padding(.bottom, bottomBarSpace)
     }
@@ -268,25 +313,10 @@ struct MainView: View {
     // MARK: - 悬浮底部导航栏
 
     private var bottomBar: some View {
-        ZStack(alignment: .bottom) {
-            if showQuickActions {
-                Color.black.opacity(0.18)
-                    .ignoresSafeArea()
-                    .contentShape(Rectangle())
-                    .onTapGesture { closeQuickActions() }
-                    .transition(.opacity)
-            }
-
-            VStack(spacing: 12) {
-                if showQuickActions {
-                    quickActionPanel
-                        .transition(.scale(scale: 0.6, anchor: .bottom).combined(with: .opacity))
-                }
-                barContent
-            }
-            .padding(.bottom, 6)
-            .animation(.spring(response: 0.36, dampingFraction: 0.8), value: showQuickActions)
+        VStack(spacing: 12) {
+            barContent
         }
+        .padding(.bottom, 6)
     }
 
     private var barContent: some View {
@@ -322,26 +352,18 @@ struct MainView: View {
         .padding(.horizontal, 20)
     }
 
-    /// 中间动态按钮：呼吸光环 + 点击旋转展开快捷操作
+    /// 中间动态按钮：呼吸光环 + 点击打开动态页（全屏覆盖，屏蔽其他按钮）
     private var centerButton: some View {
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            if showQuickActions {
-                closeQuickActions()
-            } else {
-                withAnimation(.spring(response: 0.36, dampingFraction: 0.8)) {
-                    showQuickActions = true
-                }
-            }
+            showMoments = true
         } label: {
             ZStack {
-                if !showQuickActions {
-                    Circle()
-                        .stroke(Color.chatGreen.opacity(0.38), lineWidth: 2)
-                        .frame(width: 54, height: 54)
-                        .scaleEffect(centerPulse ? 1.35 : 1)
-                        .opacity(centerPulse ? 0 : 0.75)
-                }
+                Circle()
+                    .stroke(Color.chatGreen.opacity(0.38), lineWidth: 2)
+                    .frame(width: 54, height: 54)
+                    .scaleEffect(centerPulse ? 1.35 : 1)
+                    .opacity(centerPulse ? 0 : 0.75)
                 Circle()
                     .fill(
                         LinearGradient(colors: [Color(red: 0.09, green: 0.86, blue: 0.46),
@@ -350,10 +372,9 @@ struct MainView: View {
                     )
                     .frame(width: 54, height: 54)
                     .shadow(color: Color.chatGreen.opacity(0.45), radius: 10, y: 4)
-                Image(systemName: "plus")
-                    .font(.system(size: 24, weight: .semibold))
+                Image(systemName: "sparkles")
+                    .font(.system(size: 22, weight: .semibold))
                     .foregroundColor(.white)
-                    .rotationEffect(.degrees(showQuickActions ? 45 : 0))
             }
             .frame(width: 76, height: 62)
             .contentShape(Rectangle())
@@ -364,56 +385,7 @@ struct MainView: View {
                 centerPulse = true
             }
         }
-        .accessibilityLabel(showQuickActions ? "收起快捷操作" : "快捷操作")
-    }
-
-    private var quickActionPanel: some View {
-        HStack(spacing: 10) {
-            quickActionButton(title: "加好友", icon: "person.badge.plus", tint: .blue) {
-                closeQuickActions()
-                showSearch = true
-            }
-            quickActionButton(title: "发起群聊", icon: "person.3.fill", tint: .orange) {
-                closeQuickActions()
-                showCreateGroup = true
-            }
-        }
-        .padding(8)
-        .liquidGlassBar(opacity: store.backgroundOpacity)
-        .overlay {
-            if !supportsNativeLiquidGlass {
-                Capsule().stroke(Color.white.opacity(0.3), lineWidth: 0.8)
-            }
-        }
-        .shadow(color: supportsNativeLiquidGlass ? .clear : .black.opacity(0.12),
-                radius: supportsNativeLiquidGlass ? 0 : 12,
-                y: supportsNativeLiquidGlass ? 0 : 4)
-    }
-
-    private func quickActionButton(title: String, icon: String, tint: Color,
-                                   action: @escaping () -> Void) -> some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            action()
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.system(size: 15, weight: .semibold))
-                Text(title)
-                    .font(.system(size: 14, weight: .medium))
-            }
-            .foregroundColor(tint)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(Capsule().fill(tint.opacity(0.14)))
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-
-    private func closeQuickActions() {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
-            showQuickActions = false
-        }
+        .accessibilityLabel("动态")
     }
 
     private var totalUnread: Int {

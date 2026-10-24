@@ -343,3 +343,115 @@ struct BarkInfo: Codable {
         barkKey = (try? c.decode(String.self, forKey: .barkKey)) ?? ""
     }
 }
+
+// MARK: - 动态（朋友圈）
+
+/// 动态点赞者
+struct MomentLikeUser: Codable, Equatable {
+    var userId: Int64 = 0
+    var nickname: String = ""
+    var avatar: String = ""
+
+    enum CodingKeys: String, CodingKey {
+        case userId, nickname, avatar
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        userId = (try? c.decode(Int64.self, forKey: .userId)) ?? 0
+        nickname = (try? c.decode(String.self, forKey: .nickname)) ?? ""
+        avatar = (try? c.decode(String.self, forKey: .avatar)) ?? ""
+    }
+
+    var displayName: String {
+        nickname.isEmpty ? "用户" : nickname
+    }
+}
+
+/// 动态评论
+struct MomentCommentItem: Codable, Identifiable, Equatable {
+    var id: Int64 = 0
+    var userId: Int64 = 0
+    var nickname: String = ""
+    var avatar: String = ""
+    var content: String = ""
+    var createdAt: String = ""
+
+    enum CodingKeys: String, CodingKey {
+        case id, userId, nickname, avatar, content, createdAt
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decode(Int64.self, forKey: .id)) ?? 0
+        userId = (try? c.decode(Int64.self, forKey: .userId)) ?? 0
+        nickname = (try? c.decode(String.self, forKey: .nickname)) ?? ""
+        avatar = (try? c.decode(String.self, forKey: .avatar)) ?? ""
+        content = (try? c.decode(String.self, forKey: .content)) ?? ""
+        createdAt = (try? c.decode(String.self, forKey: .createdAt)) ?? ""
+    }
+
+    var displayName: String {
+        nickname.isEmpty ? "用户" : nickname
+    }
+}
+
+/// 动态列表项
+struct MomentItem: Codable, Identifiable, Equatable {
+    var id: Int64 = 0
+    var userId: Int64 = 0
+    var content: String = ""
+    /// 服务端返回的图片 JSON 数组字符串，如 ["url1","url2"]
+    var images: String = "[]"
+    var createdAt: String = ""
+    var nickname: String = ""
+    var username: String = ""
+    var avatar: String = ""
+    var likeCount: Int = 0
+    var liked: Bool = false
+    var likeUsers: [MomentLikeUser] = []
+    var comments: [MomentCommentItem] = []
+
+    enum CodingKeys: String, CodingKey {
+        case id, userId, content, images, createdAt
+        case nickname, username, avatar
+        case likeCount, liked, likeUsers, comments
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decode(Int64.self, forKey: .id)) ?? 0
+        userId = (try? c.decode(Int64.self, forKey: .userId)) ?? 0
+        content = (try? c.decode(String.self, forKey: .content)) ?? ""
+        images = (try? c.decode(String.self, forKey: .images)) ?? "[]"
+        createdAt = (try? c.decode(String.self, forKey: .createdAt)) ?? ""
+        nickname = (try? c.decode(String.self, forKey: .nickname)) ?? ""
+        username = (try? c.decode(String.self, forKey: .username)) ?? ""
+        avatar = (try? c.decode(String.self, forKey: .avatar)) ?? ""
+        likeCount = (try? c.decode(Int.self, forKey: .likeCount)) ?? 0
+        liked = (try? c.decode(Bool.self, forKey: .liked)) ?? false
+        likeUsers = (try? c.decode([MomentLikeUser].self, forKey: .likeUsers)) ?? []
+        comments = (try? c.decode([MomentCommentItem].self, forKey: .comments)) ?? []
+    }
+
+    var displayName: String {
+        if !nickname.isEmpty { return nickname }
+        if !username.isEmpty { return username }
+        return "用户"
+    }
+
+    /// 解析 images JSON 字符串为 URL 数组
+    var imageURLs: [String] {
+        guard let data = images.data(using: .utf8),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [String] else {
+            return []
+        }
+        return arr
+    }
+}

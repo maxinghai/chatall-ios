@@ -41,6 +41,9 @@ final class AppStore: ObservableObject {
     @Published var groups: [GroupItem] = []
     @Published var pendingRequests: [PendingRequest] = []
 
+    // MARK: - 动态（朋友圈）
+    @Published var moments: [MomentItem] = []
+
     // MARK: - 消息
     /// peerKey -> 消息列表
     @Published var messagesByPeer: [Int64: [ChatMessage]] = [:]
@@ -734,6 +737,66 @@ final class AppStore: ObservableObject {
         do {
             try await ApiClient.shared.inviteToGroup(groupId: groupId, userId: userId)
             toastMessage = "已邀请"
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    // MARK: - 动态（朋友圈）业务
+
+    /// 拉取动态列表
+    func refreshMoments() async {
+        do {
+            moments = try await ApiClient.shared.momentFeed()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    /// 发布动态
+    func createMoment(content: String, images: [String]) async -> Bool {
+        do {
+            try await ApiClient.shared.createMoment(content: content, images: images)
+            toastMessage = "发布成功"
+            await refreshMoments()
+            return true
+        } catch { errorMessage = error.localizedDescription; return false }
+    }
+
+    /// 点赞 / 取消点赞（本地乐观更新，失败回滚）
+    func toggleMomentLike(momentId: Int64) async {
+        guard let idx = moments.firstIndex(where: { $0.id == momentId }) else { return }
+        let original = moments[idx]
+        var updated = original
+        updated.liked.toggle()
+        updated.likeCount += updated.liked ? 1 : -1
+        moments[idx] = updated
+
+        do {
+            let liked = try await ApiClient.shared.toggleMomentLike(momentId: momentId)
+            // 以服务端返回为准
+            if let i = moments.firstIndex(where: { $0.id == momentId }) {
+                moments[i].liked = liked
+            }
+        } catch {
+            // 回滚
+            if let i = moments.firstIndex(where: { $0.id == momentId }) {
+                moments[i] = original
+            }
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// 发表评论
+    func addMomentComment(momentId: Int64, content: String) async {
+        do {
+            try await ApiClient.shared.addMomentComment(momentId: momentId, content: content)
+            await refreshMoments()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    /// 删除动态
+    func deleteMoment(momentId: Int64) async {
+        do {
+            try await ApiClient.shared.deleteMoment(momentId: momentId)
+            moments.removeAll { $0.id == momentId }
+            toastMessage = "已删除"
         } catch { errorMessage = error.localizedDescription }
     }
 

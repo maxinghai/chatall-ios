@@ -28,6 +28,10 @@ struct ChatView: View {
     @State private var sending = false
     @StateObject private var recorder = VoiceRecorder()
     @State private var inputFocused = false
+    /// 键盘在底部安全区之上额外占用的空间（键盘高度 - 底部安全区高度）。
+    /// 手动驱动输入栏跟随键盘（替代 SwiftUI 自带键盘避让），
+    /// 解决收起时页面回跳、以及键盘 safe area 卡死导致输入栏悬空的问题。
+    @State private var keyboardPadding: CGFloat = 0
     /// 用户是否仍按住录音键（用于解决异步 start 与同步 end 的竞态：
     /// 快速点击时 onEnded 先于 recorder.start() 执行，isRecording 仍为 false，
     /// endRecord 会提前 return，导致录音启动后永远无法停止。）
@@ -46,6 +50,7 @@ struct ChatView: View {
                 Divider()
                 inputBar
             }
+            .padding(.bottom, keyboardPadding)
             .navigationBarTitle(title, displayMode: .inline)
             .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
@@ -112,6 +117,18 @@ struct ChatView: View {
                     .transition(.opacity)
             }
         }
+        // 关闭系统键盘避让：布局完全由 keyboardPadding 手动驱动，
+        // 输入栏与键盘同曲线同步移动，也彻底规避键盘 safe area 卡死导致的悬空。
+        .ignoresSafeArea(.keyboard, edges: .bottom)
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+            syncKeyboardPadding(note)
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIResponder.keyboardWillHideNotification)) { note in
+            // 个别收起路径只发 WillHide，这里兜底走同一套逻辑
+            syncKeyboardPadding(note)
+        }
     }
 
     /// 预先计算每条消息是否需要显示时间分隔线
@@ -172,6 +189,7 @@ struct ChatView: View {
                 .padding(.bottom, 12)
                 .padding(.horizontal, 12)
             }
+            .scrollDismissesKeyboardCompat()
             .contentShape(Rectangle())
             .onTapGesture { inputFocused = false }
             .onChange(of: messages.count) { _ in
@@ -213,6 +231,36 @@ struct ChatView: View {
         DispatchQueue.main.async { doScroll() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { doScroll() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { doScroll() }
+    }
+
+    // MARK: - 键盘跟随
+
+    /// 依据键盘目标 frame 更新底部 padding：取键盘自身的动画时长与近似曲线，
+    /// 让输入栏紧贴键盘顶边同步升降；收起时同样贴着键盘下降，不再回跳。
+    private func syncKeyboardPadding(_ note: Notification) {
+        guard let info = note.userInfo,
+              let endFrame = (info[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+        else { return }
+        let window = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first(where: { $0.isKeyWindow })
+        // 键盘 frame 高度包含底部安全区，只取安全区之上的部分作为额外 padding
+        let screenH = window?.bounds.height ?? UIScreen.main.bounds.height
+        let baseInset = window?.safeAreaInsets.bottom ?? 0
+        let target = max(0, screenH - baseInset - endFrame.minY)
+        guard abs(target - keyboardPadding) > 0.5 else { return }
+        let duration = (info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+        if duration <= 0.01 {
+            // 无动画路径：直接落位
+            keyboardPadding = target
+        } else {
+            // iOS 键盘使用私有动画曲线，0.17/0.59/0.40/0.71 为其通用近似值，
+            // 配合键盘官方时长即可与键盘完全同步移动
+            withAnimation(Animation.timingCurve(0.17, 0.59, 0.40, 0.71, duration: duration)) {
+                keyboardPadding = target
+            }
+        }
     }
 
     private func senderName(_ msg: ChatMessage) -> String {
@@ -505,6 +553,18 @@ struct ChatView: View {
             previewItem = PreviewItem(urls: imageURLs, index: idx, sourceFrame: frame)
         } else {
             previewItem = PreviewItem(urls: [url], index: 0, sourceFrame: frame)
+        }
+    }
+}
+
+/// iOS 16+ 把列表拖动收起键盘改为「立即整体收起」：
+/// 交互式逐帧拖拽与手动键盘跟随无法逐帧同步，且是半截键盘残留的常见诱因。
+private struct ScrollDismissesKeyboardCompat: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 16.0, *) {
+            content.scrollDismissesKeyboard(.immediately)
+        } else {
+            content
         }
     }
 }

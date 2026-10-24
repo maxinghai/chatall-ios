@@ -38,6 +38,9 @@ struct ChatView: View {
 
     var body: some View {
         ZStack {
+            // 聊天页也铺同一张背景图
+            ChatBackgroundImageView()
+
             VStack(spacing: 0) {
                 messageArea
                 Divider()
@@ -176,7 +179,8 @@ struct ChatView: View {
                 .padding(.horizontal, 12)
             }
             .background(
-                Rectangle().fill(.thinMaterial)
+                // 半透明玻璃层：既保证文字可读，又能透出背景图
+                LiquidGlassOverlay(opacity: store.backgroundOpacity)
             )
             .contentShape(Rectangle())
             .onTapGesture { inputFocused = false }

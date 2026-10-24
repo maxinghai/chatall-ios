@@ -30,7 +30,7 @@ struct MainView: View {
     var body: some View {
         ZStack {
             // 底图：所有页面共用同一张
-            ChatBackgroundImageView(url: store.backgroundURL)
+            ChatBackgroundImageView()
 
             NavigationView {
                 VStack(spacing: 0) {

@@ -67,6 +67,9 @@ final class AppStore: ObservableObject {
     // MARK: - 聊天背景（本地）
     /// 当前背景图 URL（nil = 未设置）。所有页面订阅它来重绘底图。
     @Published var backgroundURL: URL? = AppConfig.backgroundImageURL
+    /// 背景图内容版本：文件名固定为 bg.jpg，URL 不会变，
+    /// 每次换图递增此值，让背景视图知道要从磁盘重新加载。
+    @Published var backgroundVersion: Int = 0
     /// 玻璃叠加层不透明度（0.3~1.0）
     @Published var backgroundOpacity: Double = AppConfig.backgroundOpacity
 
@@ -76,15 +79,15 @@ final class AppStore: ObservableObject {
             AppConfig.clearBackground()
             _bgImageCache.removeAllObjects()
             backgroundURL = nil
+            backgroundVersion &+= 1
             return
         }
         if AppConfig.saveBackgroundImage(image) {
-            // 保存的是同一个 bg.jpg 路径，URL 不变，需要清缓存 + 强制刷新
+            // 保存的是同一个 bg.jpg 路径，URL 不变，但内容已变：
+            // 清掉图片缓存，再递增版本号强制所有背景视图重新从磁盘读取
             _bgImageCache.removeAllObjects()
-            let url = AppConfig.backgroundImageURL
-            backgroundURL = nil
-            objectWillChange.send()
-            backgroundURL = url
+            backgroundURL = AppConfig.backgroundImageURL
+            backgroundVersion &+= 1
         } else {
             errorMessage = "背景图保存失败"
         }
@@ -94,6 +97,7 @@ final class AppStore: ObservableObject {
         AppConfig.clearBackground()
         _bgImageCache.removeAllObjects()
         backgroundURL = nil
+        backgroundVersion &+= 1
     }
 
     func setBackgroundOpacity(_ value: Double) {
@@ -947,20 +951,30 @@ private var _bgImageCache: NSCache<NSURL, UIImage> = {
     return c
 }()
 
-/// 全页背景：若用户设置了背景图，底层放一张填满屏幕的 Image
+/// 全页背景：若用户设置了背景图，底层放一张填满可用区域的 Image
+/// 直接订阅 AppStore，换图（backgroundVersion 变化）后所有引用处都会自动重绘
 struct ChatBackgroundImageView: View {
-    let url: URL?
+    @EnvironmentObject private var store: AppStore
+    /// 全屏底图传 true（铺满安全区）；小尺寸预览传 false，避免溢出到整个页面
+    var fillsScreen: Bool = true
+
     var body: some View {
-        if let url, let image = loadImage(url) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .ignoresSafeArea()
-                .transition(.opacity)
+        GeometryReader { geo in
+            if let url = store.backgroundURL, let image = loadImage(url) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .transition(.opacity)
+                    .id(store.backgroundVersion)
+            }
         }
+        .ignoresSafeArea(edges: fillsScreen ? .all : [])
+        .allowsHitTesting(false)
     }
 
-    /// 带缓存的图片加载：同一 URL 只从磁盘读一次
+    /// 带缓存的图片加载：同一 URL 只从磁盘读一次（换图时 AppStore 会清空缓存）
     private func loadImage(_ url: URL) -> UIImage? {
         if let cached = _bgImageCache.object(forKey: url as NSURL) {
             return cached

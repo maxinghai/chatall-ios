@@ -157,7 +157,7 @@ struct LoginView: View {
             }
             .padding(.horizontal, 28)
         }
-        .background(Color(.systemBackground).ignoresSafeArea())
+        .background(Color.clear)
         .alert(isPresented: Binding(
             get: { store.errorMessage != nil },
             set: { if !$0 { store.errorMessage = nil } }

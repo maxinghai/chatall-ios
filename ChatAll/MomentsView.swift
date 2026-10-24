@@ -16,44 +16,60 @@ struct MomentsView: View {
     @State private var showCreate = false
     @State private var commentingMomentId: Int64? = nil
     @State private var commentText = ""
+    @State private var previewItem: PreviewItem? = nil
 
     var body: some View {
-        NavigationView {
-            List {
-                ForEach(store.moments) { moment in
-                    momentRow(moment)
+        ZStack {
+            // 动态页（全屏覆盖）同样铺背景图
+            ChatBackgroundImageView()
+
+            NavigationView {
+                List {
+                    ForEach(store.moments) { moment in
+                        momentRow(moment)
+                    }
+                    if store.moments.isEmpty {
+                        Text("还没有动态，点击右上角发布第一条吧")
+                            .foregroundColor(.gray)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, 60)
+                    }
                 }
-                if store.moments.isEmpty {
-                    Text("还没有动态，点击右上角发布第一条吧")
-                        .foregroundColor(.gray)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.top, 60)
+                .listStyle(PlainListStyle())
+                .liquidGlassList(opacity: store.backgroundOpacity)
+                .refreshable {
+                    await store.refreshMoments()
                 }
-            }
-            .listStyle(PlainListStyle())
-            .refreshable {
-                await store.refreshMoments()
-            }
-            .navigationBarTitle("动态", displayMode: .inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("关闭") { dismiss() }
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showCreate = true
-                    } label: {
-                        Image(systemName: "square.and.pencil")
+                .navigationBarTitle("动态", displayMode: .inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button("关闭") { dismiss() }
+                    }
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button {
+                            showCreate = true
+                        } label: {
+                            Image(systemName: "square.and.pencil")
+                        }
                     }
                 }
             }
-        }
-        .navigationViewStyle(StackNavigationViewStyle())
-        .sheet(isPresented: $showCreate) {
-            CreateMomentSheet()
-        }
-        .task {
-            await store.refreshMoments()
+            .navigationViewStyle(StackNavigationViewStyle())
+            .sheet(isPresented: $showCreate) {
+                CreateMomentSheet()
+            }
+            .task {
+                await store.refreshMoments()
+            }
+
+            // 全屏图片预览（仿微信：点击九宫格展开，拖拽/捏合收起）
+            if let item = previewItem {
+                ImagePreviewView(urls: item.urls,
+                                 currentIndex: item.index,
+                                 sourceFrame: item.sourceFrame,
+                                 onDismiss: { previewItem = nil })
+                    .zIndex(1)
+            }
         }
     }
 
@@ -95,9 +111,11 @@ struct MomentsView: View {
             }
 
             // 图片九宫格
-            let urls = moment.imageURLs
+            let urls = moment.imageURLs.compactMap { AppConfig.fileURL($0) }
             if !urls.isEmpty {
-                imageGrid(urls)
+                MomentImagesGrid(urls: urls) { index, frame in
+                    previewItem = PreviewItem(urls: urls, index: index, sourceFrame: frame)
+                }
             }
 
             // 操作栏：点赞 + 评论
@@ -189,23 +207,125 @@ struct MomentsView: View {
         }
         .padding(.vertical, 12)
     }
+}
 
-    // MARK: - 图片九宫格
+/// 微信风格图片九宫格：
+/// 1 张按原图比例单图展示；2、4 张两列；其余三列。
+/// 单元格使用固定正方形尺寸，避免 LazyVGrid 在自适应宽高下错位。
+private struct MomentImagesGrid: View {
+    let urls: [URL]
+    let onTap: (Int, CGRect?) -> Void
 
-    private func imageGrid(_ urls: [String]) -> some View {
-        let columns = urls.count == 1 ? 1 : (urls.count <= 4 ? 2 : 3)
-        let gridItem = GridItem(.flexible(), spacing: 4)
-        return LazyVGrid(columns: Array(repeating: gridItem, count: columns), spacing: 4) {
-            ForEach(urls.indices, id: \.self) { idx in
-                if let url = AppConfig.fileURL(urls[idx]) {
-                    CachedImage(url: url,
-                                placeholder: { Color.gray.opacity(0.2) },
-                                failure: { Color.gray.opacity(0.2) })
-                        .aspectRatio(1, contentMode: .fill)
-                        .clipped()
+    @State private var availableWidth: CGFloat = 0
+    @State private var frames: [Int: CGRect] = [:]
+
+    private let spacing: CGFloat = 4
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // 仅用于测量行宽（0 高度，不参与布局）
+            Color.clear
+                .frame(maxWidth: .infinity)
+                .frame(height: 0)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear
+                            .onAppear { availableWidth = geo.size.width }
+                            .onChange(of: geo.size.width) { availableWidth = $0 }
+                    }
+                )
+
+            content
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if urls.count == 1 {
+            let width = availableWidth > 0 ? min(max(availableWidth * 0.7, 120), 240) : 200
+            MomentSingleImage(url: urls[0], maxWidth: width)
+                .background(frameRecorder(0))
+                .contentShape(Rectangle())
+                .onTapGesture { onTap(0, frames[0]) }
+        } else {
+            let columns = (urls.count == 2 || urls.count == 4) ? 2 : 3
+            let side = cellSide(columns: columns)
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(side), spacing: spacing),
+                                     count: columns),
+                      alignment: .leading,
+                      spacing: spacing) {
+                ForEach(urls.indices, id: \.self) { i in
+                    gridCell(url: urls[i], index: i, side: side)
                 }
             }
         }
+    }
+
+    private func cellSide(columns: Int) -> CGFloat {
+        let maxSide: CGFloat = columns == 2 ? 150 : 100
+        guard availableWidth > 0 else { return maxSide }
+        let fit = (availableWidth - spacing * CGFloat(columns - 1)) / CGFloat(columns)
+        return max(44, min(maxSide, fit))
+    }
+
+    private func gridCell(url: URL, index: Int, side: CGFloat) -> some View {
+        CachedImage(url: url,
+                    placeholder: { Color.gray.opacity(0.15) },
+                    failure: {
+                        Image(systemName: "photo")
+                            .font(.system(size: 22))
+                            .foregroundColor(.gray)
+                    })
+            .frame(width: side, height: side)
+            .clipped()
+            .background(Color.gray.opacity(0.15))
+            .contentShape(Rectangle())
+            .background(frameRecorder(index))
+            .onTapGesture { onTap(index, frames[index]) }
+    }
+
+    /// 记录单元格在当前屏幕上的 frame，供预览展开动画使用
+    private func frameRecorder(_ key: Int) -> some View {
+        GeometryReader { geo in
+            Color.clear
+                .onAppear { frames[key] = geo.frame(in: .global) }
+                .onChange(of: geo.frame(in: .global)) { frames[key] = $0 }
+        }
+    }
+}
+
+/// 单张图片：按原图比例展示（限宽限高），加载前先用正方形占位。
+private struct MomentSingleImage: View {
+    let url: URL
+    let maxWidth: CGFloat
+
+    @State private var ratio: CGFloat = 1
+
+    private var size: CGSize {
+        if ratio >= 1 {
+            return CGSize(width: maxWidth, height: max(56, maxWidth / ratio))
+        }
+        let maxHeight = maxWidth * 1.3
+        return CGSize(width: maxHeight * ratio, height: maxHeight)
+    }
+
+    var body: some View {
+        CachedImage(url: url,
+                    placeholder: { Color.gray.opacity(0.15) },
+                    failure: {
+                        Image(systemName: "photo")
+                            .font(.system(size: 30))
+                            .foregroundColor(.gray)
+                    })
+            .frame(width: size.width, height: size.height)
+            .clipped()
+            .background(Color.gray.opacity(0.15))
+            .task(id: url) {
+                guard let img = await ImageCache.image(for: url),
+                      img.size.width > 0, img.size.height > 0 else { return }
+                // 限制极端比例，避免长图占满整屏
+                ratio = min(max(img.size.width / img.size.height, 0.4), 2.5)
+            }
     }
 }
 

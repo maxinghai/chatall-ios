@@ -20,6 +20,8 @@ struct ImagePreviewView: View {
 
     @State private var index: Int
     @State private var bgOpacity: Double = 0
+    /// pager 层的透明度：与 hero 交叉淡化，避免展开结束时硬切闪跳
+    @State private var pagerOpacity: Double = 0
     @State private var chromeVisible = true
     @State private var isDismissing = false
 
@@ -90,8 +92,8 @@ struct ImagePreviewView: View {
                     .simultaneousGesture(tapGesture(in: geo.size))
                     .offset(x: dismissOffset.width, y: dismissOffset.height)
                     .scaleEffect(dismissScale)
-                    .opacity(heroPhase == .showing ? 1 : 0)
-                    .allowsHitTesting(heroPhase == .showing)
+                    .opacity(pagerOpacity)
+                    .allowsHitTesting(heroPhase == .showing && !isDismissing)
                     .onChange(of: geo.size) { viewSize = $0 }
 
                 // hero 过渡层
@@ -139,39 +141,53 @@ struct ImagePreviewView: View {
                 .frame(width: heroFrame.width, height: heroFrame.height)
                 .position(x: heroFrame.midX, y: heroFrame.midY)
                 .cornerRadius(heroCornerRadius)
-                .clipped()
         }
+    }
+
+    /// 同步读取内存缓存：缩略图刚在列表/气泡里显示过，必然命中。
+    /// 这样展开/关闭动画可以在呈现的同一帧启动，不再等异步取图，消除起手卡顿。
+    private func cachedImage(for url: URL) -> UIImage? {
+        ImageCache.memory.object(forKey: url.absoluteString as NSString)
     }
 
     // MARK: - 展开 / 关闭动画
 
     private func playEnterAnimation(in screenRect: CGRect) {
-        guard let source = sourceFrame else {
+        bgOpacity = 0
+        pagerOpacity = 0
+
+        guard let source = sourceFrame, let img = cachedImage(for: urls[index]) else {
+            // 无源缩略图 / 缓存未命中：纯淡入，避免先跳一下再加载
             withAnimation(.easeOut(duration: enterDuration)) {
                 bgOpacity = 1
+                pagerOpacity = 1
             }
             heroPhase = .showing
             return
         }
 
+        // 同帧启动：hero 从缩略图位置放大，背景同步变黑
+        heroImage = img
         heroPhase = .expanding
         heroFrame = source
         heroCornerRadius = 10
-        heroImage = nil
 
-        Task { @MainActor in
-            let img = await ImageCache.image(for: urls[index])
-            heroImage = img
-            let target = fitFrame(for: img?.size ?? .zero, in: screenRect)
-            // 固定时长 easeOut，结束时与 pager 对齐，避免 spring 时序错位
-            withAnimation(.easeOut(duration: enterDuration)) {
-                heroFrame = target
-                heroCornerRadius = 0
-                bgOpacity = 1
+        let target = fitFrame(for: img.size, in: screenRect)
+        let enterAnim = Animation.timingCurve(0.2, 0.7, 0.3, 1.0, duration: enterDuration)
+        withAnimation(enterAnim) {
+            heroFrame = target
+            heroCornerRadius = 0
+            bgOpacity = 1
+        }
+
+        // hero 接近到位时让 pager 交叉淡入：两者最终画面完全重合，切换点无感
+        DispatchQueue.main.asyncAfter(deadline: .now() + enterDuration * 0.45) {
+            withAnimation(.easeInOut(duration: enterDuration * 0.55)) {
+                pagerOpacity = 1
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + enterDuration) {
-                heroPhase = .showing
-            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + enterDuration) {
+            heroPhase = .showing
         }
     }
 
@@ -187,37 +203,48 @@ struct ImagePreviewView: View {
 
     private func playExitAnimation(in screenRect: CGRect) {
         heroPhase = .closing
+        let fadeOut = Animation.timingCurve(0.4, 0.0, 0.2, 1.0, duration: exitDuration)
 
-        // 源图不可见或无 source：直接淡出
-        guard let source = sourceFrame, isSourceVisible(source) else {
-            withAnimation(.easeOut(duration: exitDuration)) {
+        // pager 与 hero 交叉淡化，避免关闭瞬间整屏画面先消失
+        withAnimation(.easeOut(duration: exitDuration * 0.6)) {
+            pagerOpacity = 0
+        }
+
+        // 源图不可见、无 source 或缓存缺失：直接淡出，避免飞回屏幕外
+        guard let source = sourceFrame, isSourceVisible(source),
+              let img = cachedImage(for: urls[index]) else {
+            withAnimation(fadeOut) {
                 bgOpacity = 0
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + exitDuration) { onDismiss() }
             return
         }
 
-        Task { @MainActor in
-            let img = await ImageCache.image(for: urls[index])
-            heroImage = img
-            let fit = fitFrame(for: img?.size ?? .zero, in: screenRect)
-            // 从当前拖拽/缩放后的实际位置开始，避免从屏幕中心跳变
-            let combinedScale = dismissScale * scale
-            let startFrame = CGRect(
-                x: fit.midX + dismissOffset.width + offset.width - fit.width * combinedScale / 2,
-                y: fit.midY + dismissOffset.height + offset.height - fit.height * combinedScale / 2,
-                width: fit.width * combinedScale,
-                height: fit.height * combinedScale
-            )
-            heroFrame = startFrame
-            heroCornerRadius = 0
-            withAnimation(.easeOut(duration: exitDuration)) {
-                heroFrame = source
-                heroCornerRadius = 10
-                bgOpacity = 0
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + exitDuration) { onDismiss() }
+        heroImage = img
+        heroCornerRadius = 0
+
+        // 从“当前真实渲染位置”起飞：
+        // pager 的 dismissOffset/offset 会被 dismissScale 统一缩放，这里必须同比例计算，
+        // 否则拖拽关闭（已带位移/缩放）时 hero 起手会跳一下。
+        let fit = fitFrame(for: img.size, in: screenRect)
+        let combinedScale = dismissScale * scale
+        let startCenter = CGPoint(
+            x: fit.midX + (offset.width + dismissOffset.width) * dismissScale,
+            y: fit.midY + (offset.height + dismissOffset.height) * dismissScale
+        )
+        heroFrame = CGRect(
+            x: startCenter.x - fit.width * combinedScale / 2,
+            y: startCenter.y - fit.height * combinedScale / 2,
+            width: fit.width * combinedScale,
+            height: fit.height * combinedScale
+        )
+
+        withAnimation(fadeOut) {
+            heroFrame = source
+            heroCornerRadius = 10
+            bgOpacity = 0
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + exitDuration) { onDismiss() }
     }
 
     /// 源缩略图是否仍在屏幕内（滚出屏幕则改用淡出，避免图片飞回不可见区域）
@@ -228,7 +255,10 @@ struct ImagePreviewView: View {
 
     private func triggerDismiss() {
         guard !isDismissing else { return }
-        isDismissing = true
+        // 顶部栏随关闭动画一起淡出，而不是整层被瞬间移除
+        withAnimation(.easeInOut(duration: 0.15)) {
+            isDismissing = true
+        }
         playExitAnimation(in: CGRect(origin: .zero, size: viewSize))
     }
 
@@ -304,9 +334,10 @@ struct ImagePreviewView: View {
     }
 
     private var chromeOpacity: Double {
-        guard chromeVisible else { return 0 }
+        guard chromeVisible, !isDismissing else { return 0 }
         let dist = hypot(dismissOffset.width, dismissOffset.height)
-        return max(0, 1 - Double(dist / 200))
+        // 顶部栏跟随背景一起淡入，避免展开瞬间按钮“突然出现”
+        return max(0, bgOpacity) * max(0, 1 - Double(dist / 200))
     }
 
     private var dismissScale: CGFloat {
@@ -355,10 +386,11 @@ struct ImagePreviewView: View {
                     pageDrag = pageDragValue(for: value.translation.width, in: size)
                     dismissOffset = .zero
                 case .dismiss:
-                    // 任意方向拖拽：图片跟随手指 1:1，轻微缩放 + 背景渐变
+                    // 任意方向拖拽：图片跟随手指 1:1，背景做带缓动的淡出
                     dismissOffset = value.translation
                     let dist = hypot(dismissOffset.width, dismissOffset.height)
-                    bgOpacity = max(0, 1 - Double(dist / 420))
+                    let progress = min(1, Double(dist / 420))
+                    bgOpacity = pow(1 - progress, 1.3)
                 default:
                     break
                 }
@@ -390,7 +422,11 @@ struct ImagePreviewView: View {
         let atLeadingEdge = index == 0 && dx > 0
         let atTrailingEdge = index == urls.count - 1 && dx < 0
         if atLeadingEdge || atTrailingEdge {
-            return dx * 0.25
+            // 边缘橡皮筋阻尼：越拖阻力越大，避免生硬的一比一跟手
+            let sign: CGFloat = dx > 0 ? 1 : -1
+            let x = abs(dx)
+            let resisted = x * 0.5 / (1 + x / (size.width * 0.9))
+            return sign * min(size.width * 0.3, resisted)
         }
         return max(-size.width * 0.85, min(size.width * 0.85, dx))
     }
@@ -477,7 +513,8 @@ struct ImagePreviewView: View {
             .onEnded { value in
                 guard !isDismissing, heroPhase == .showing else { return }
                 let now = Date()
-                if now.timeIntervalSince(lastTapTime) < 0.3 {
+                // 双击判定窗口缩小到 0.25s：单击呼出/隐藏顶部栏更跟手
+                if now.timeIntervalSince(lastTapTime) < 0.25 {
                     lastTapTime = .distantPast
                     pendingChromeWork?.cancel()
                     pendingChromeWork = nil
@@ -490,7 +527,7 @@ struct ImagePreviewView: View {
                         }
                     }
                     pendingChromeWork = work
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
                 }
             }
     }
@@ -576,6 +613,21 @@ private struct PreviewPageView: View {
     @State private var image: UIImage?
     @State private var failed = false
 
+    init(url: URL,
+         isCurrent: Bool,
+         scale: CGFloat,
+         offset: CGSize,
+         onLoaded: @escaping (CGSize) -> Void) {
+        self.url = url
+        self.isCurrent = isCurrent
+        self.scale = scale
+        self.offset = offset
+        self.onLoaded = onLoaded
+        // 命中内存缓存时首帧直接出图，翻页/交叉淡化时不再闪一下加载圈
+        _image = State(initialValue: ImageCache.memory.object(
+            forKey: url.absoluteString as NSString))
+    }
+
     var body: some View {
         GeometryReader { geo in
             ZStack {
@@ -605,9 +657,10 @@ private struct PreviewPageView: View {
         }
         .task(id: url) {
             failed = false
-            image = nil
-            if let img = await ImageCache.image(for: url) {
-                image = img
+            if image == nil {
+                image = await ImageCache.image(for: url)
+            }
+            if let img = image {
                 onLoaded(img.size)
             } else {
                 failed = true

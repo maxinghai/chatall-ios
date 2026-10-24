@@ -60,11 +60,16 @@ struct RootView: View {
     @EnvironmentObject var store: AppStore
 
     var body: some View {
-        Group {
-            if store.isLoggedIn {
-                MainView()
-            } else {
-                LoginView()
+        ZStack {
+            // 全局底图：登录页 / 主界面（会话、聊天、个人资料）共用
+            ChatBackgroundImageView()
+
+            Group {
+                if store.isLoggedIn {
+                    MainView()
+                } else {
+                    LoginView()
+                }
             }
         }
     }

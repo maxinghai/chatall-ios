@@ -96,7 +96,7 @@ struct ProfileView: View {
                         .fill(Color(.secondarySystemBackground))
                         .frame(width: 90, height: 140)
                         .overlay {
-                            ChatBackgroundImageView(url: store.backgroundURL)
+                            ChatBackgroundImageView(fillsScreen: false)
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 10)

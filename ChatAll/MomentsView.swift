@@ -20,27 +20,32 @@ struct MomentsView: View {
 
     var body: some View {
         ZStack {
-            // 动态页（全屏覆盖）同样铺背景图
-            ChatBackgroundImageView()
-
             NavigationView {
-                List {
-                    ForEach(store.moments) { moment in
-                        momentRow(moment)
+                ZStack {
+                    // 底图放在 NavigationView 内部，否则会被导航容器的不透明底色盖住
+                    ChatBackgroundImageView()
+
+                    List {
+                        ForEach(store.moments) { moment in
+                            momentRow(moment)
+                        }
+                        if store.moments.isEmpty {
+                            Text("还没有动态，点击右上角发布第一条吧")
+                                .foregroundColor(.gray)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.top, 60)
+                        }
                     }
-                    if store.moments.isEmpty {
-                        Text("还没有动态，点击右上角发布第一条吧")
-                            .foregroundColor(.gray)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.top, 60)
+                    .listStyle(PlainListStyle())
+                    .liquidGlassList(opacity: store.backgroundOpacity)
+                    .refreshable {
+                        await store.refreshMoments()
                     }
-                }
-                .listStyle(PlainListStyle())
-                .liquidGlassList(opacity: store.backgroundOpacity)
-                .refreshable {
-                    await store.refreshMoments()
                 }
                 .navigationBarTitle("动态", displayMode: .inline)
+                // 图片预览时隐藏原本的导航栏（关闭按钮 + 发布按钮），
+                // 避免它们覆盖在全屏预览之上
+                .toolbar(previewItem != nil ? .hidden : .visible, for: .navigationBar)
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) {
                         Button("关闭") { dismiss() }

@@ -29,12 +29,15 @@ struct MainView: View {
 
     var body: some View {
         ZStack {
-            // 底图：所有页面共用同一张
-            ChatBackgroundImageView()
-
             NavigationView {
-                VStack(spacing: 0) {
-                    content
+                ZStack {
+                    // 底图必须放在 NavigationView 内部：
+                    // 放在外层会被导航容器的不透明底色整块盖住，导致主页看不到背景图
+                    ChatBackgroundImageView()
+
+                    VStack(spacing: 0) {
+                        content
+                    }
                 }
                 .navigationBarTitle(tabTitle, displayMode: .inline)
                 .toolbarBackground(.hidden, for: .navigationBar)

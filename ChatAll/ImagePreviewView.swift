@@ -81,7 +81,7 @@ struct ImagePreviewView: View {
             let screenRect = CGRect(origin: .zero, size: geo.size)
 
             ZStack {
-                // 蒙板（整层忽略安全区，使本地坐标 == .global，与气泡 sourceFrame 对齐）
+                // 蒙板（全屏覆盖，包含状态栏区域）
                 Color.black.opacity(bgOpacity)
 
                 // pager 内容
@@ -104,7 +104,6 @@ struct ImagePreviewView: View {
                     .opacity(chromeOpacity)
                     .allowsHitTesting(heroPhase == .showing && !isDismissing)
             }
-            .ignoresSafeArea()
             .statusBar(hidden: true)
             .onAppear {
                 viewSize = geo.size
@@ -128,6 +127,9 @@ struct ImagePreviewView: View {
                 }
             }
         }
+        // GeometryReader 忽略安全区：geo.size 为全屏尺寸，使图片占满整个屏幕（含状态栏区域），
+        // 同时 hero 与 pager 坐标系一致，消除展开/收起时的跳动闪烁
+        .ignoresSafeArea()
     }
 
     // MARK: - hero 过渡层
@@ -169,7 +171,9 @@ struct ImagePreviewView: View {
         // 同帧启动：hero 从缩略图位置放大，背景同步变黑
         heroImage = img
         heroPhase = .expanding
-        heroFrame = source
+        // 起始 frame 取图片在缩略图内的 fit rect（保持图片宽高比），
+        // 与目标 fitFrame 宽高比一致，动画过程中图片不变形、不闪烁
+        heroFrame = fitFrame(for: img.size, in: source)
         heroCornerRadius = 10
 
         let target = fitFrame(for: img.size, in: screenRect)
@@ -240,7 +244,8 @@ struct ImagePreviewView: View {
         )
 
         withAnimation(fadeOut) {
-            heroFrame = source
+            // 回到图片在缩略图内的 fit rect（与展开动画对称，保持宽高比不变形）
+            heroFrame = fitFrame(for: img.size, in: source)
             heroCornerRadius = 10
             bgOpacity = 0
         }

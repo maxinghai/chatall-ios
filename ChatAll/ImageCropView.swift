@@ -45,13 +45,17 @@ struct ImageCropView: View {
         let imgH = max(displayImage.size.height, 1) * displayScale
 
         ZStack {
-            Color.black.ignoresSafeArea()
+            Color.black
 
             Image(uiImage: displayImage)
                 .resizable()
                 .frame(width: imgW, height: imgH)
                 .offset(translation)
         }
+        // 必须固定为屏幕大小：否则 ZStack 会被放大后的图片撑得比屏幕宽，
+        // 底部按钮栏会超出屏幕右边缘，"完成"按钮被裁掉
+        .frame(width: screenSize.width, height: screenSize.height)
+        .clipped()
         .ignoresSafeArea()
         .gesture(
             SimultaneousGesture(

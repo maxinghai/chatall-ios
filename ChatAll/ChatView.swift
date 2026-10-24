@@ -48,6 +48,9 @@ struct ChatView: View {
             }
             .navigationBarTitle(title, displayMode: .inline)
             .toolbarBackground(.hidden, for: .navigationBar)
+            // 图片预览时隐藏原本的导航栏（返回按钮 + 通话按钮），
+            // 避免它们覆盖在全屏预览之上
+            .toolbar(previewItem != nil ? .hidden : .visible, for: .navigationBar)
             .toolbar {
                 // iOS 15 的 ToolbarContentBuilder 不支持 if（buildIf 需 iOS 16+），
                 // 条件判断必须放在 ToolbarItem 内部的 ViewBuilder 里。
@@ -179,8 +182,8 @@ struct ChatView: View {
                 .padding(.horizontal, 12)
             }
             .background(
-                // 半透明玻璃层：既保证文字可读，又能透出背景图
-                LiquidGlassOverlay(opacity: store.backgroundOpacity)
+                // 只保留极淡的一层底色：material + 白底会把聊天背景图糊成一整片白
+                Color(.systemBackground).opacity(store.backgroundOpacity * 0.12)
             )
             .contentShape(Rectangle())
             .onTapGesture { inputFocused = false }

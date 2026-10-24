@@ -985,41 +985,19 @@ struct ChatBackgroundImageView: View {
     }
 }
 
-/// 液态玻璃叠加层：Material + 系统底色的混合，支持透明度调节
-/// - iOS 16+ 用 .ultraThinMaterial / .thinMaterial，不支持 Liquid Glass API
-/// - iOS 26+ 可在外部用 .glassEffect 装饰本组件
-struct LiquidGlassOverlay: View {
-    let opacity: Double
-    var body: some View {
-        ZStack {
-            Rectangle().fill(.ultraThinMaterial)
-            Color(.systemBackground)
-                .opacity(opacity)
-        }
-        .allowsHitTesting(false)
-    }
-}
-
-/// 把 List/Form 变成"透明底色 + 玻璃材质"的修饰器
+/// 把 List/Form 变成"完全透明"的修饰器，让页面底图透出来
 /// 用法：list.liquidGlassList(opacity: store.backgroundOpacity)
-/// opacity 越高 = 叠加的不透明涂层越厚 = 背景图越不容易透出来
+/// 注意：不要在这里叠 material + 白底，否则会把背景图糊成一整片白
 struct LiquidGlassListModifier: ViewModifier {
     let opacity: Double
     func body(content: Content) -> some View {
         content
             .scrollContentBackground(.hidden)     // 隐藏 List 默认的整块白底
             .listRowBackground(Color.clear)       // 隐藏每一行自己的白底（关键！）
-            .background(glassOverlay(opacity: opacity))
-    }
-
-    @ViewBuilder
-    private func glassOverlay(opacity: Double) -> some View {
-        // Material 本身就是玻璃模糊，后面叠一个可调不透明度的同色涂层
-        ZStack {
-            Rectangle().fill(.ultraThinMaterial)
-            // opacity 默认 0.55 比较通透；用户滑块范围 0.15~0.95
-            Color(.systemBackground).opacity(opacity * 0.6)
-        }
+            .background(
+                // 只保留极淡的一层底色，兼顾文字可读性
+                Color(.systemBackground).opacity(opacity * 0.12)
+            )
     }
 }
 

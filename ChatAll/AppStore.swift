@@ -1015,12 +1015,18 @@ struct LiquidGlassListModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         // InsetGroupedListStyle 在 iOS 13+ 就有，分组卡片式布局天然适合液态玻璃
-        content
+        let base = content
             .listStyle(InsetGroupedListStyle())
-            .listSectionSpacing(14)
             .scrollContentBackground(.hidden)
             .listRowBackground(glassRowBackground)
             .listRowSeparatorTint(Color(.separator).opacity(0.6))
+
+        // listSectionSpacing 是 iOS 17+ API，低版本省略（用系统默认分组间距）
+        if #available(iOS 17.0, *) {
+            base.listSectionSpacing(14)
+        } else {
+            base
+        }
     }
 
     @ViewBuilder

@@ -189,7 +189,7 @@ struct ChatView: View {
                 .padding(.bottom, 12)
                 .padding(.horizontal, 12)
             }
-            .scrollDismissesKeyboardCompat()
+            .modifier(ScrollDismissesKeyboardCompat())
             .contentShape(Rectangle())
             .onTapGesture { inputFocused = false }
             .onChange(of: messages.count) { _ in

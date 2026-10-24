@@ -8,6 +8,7 @@
 
 import SwiftUI
 import UIKit
+import QuartzCore
 import AVFoundation
 import PhotosUI
 import UniformTypeIdentifiers
@@ -28,6 +29,8 @@ struct ChatView: View {
     @State private var sending = false
     @StateObject private var recorder = VoiceRecorder()
     @State private var inputFocused = false
+    /// 键盘升降期间逐帧贴底的驱动器（见 followKeyboard）
+    @State private var keyboardFollow: KeyboardBottomFollower?
     /// 用户是否仍按住录音键（用于解决异步 start 与同步 end 的竞态：
     /// 快速点击时 onEnded 先于 recorder.start() 执行，isRecording 仍为 false，
     /// endRecord 会提前 return，导致录音启动后永远无法停止。）
@@ -81,6 +84,8 @@ struct ChatView: View {
                 .onDisappear {
                     store.closeConversation(peerId: peerId)
                     recorder.stopPlay()
+                    keyboardFollow?.stop()
+                    keyboardFollow = nil
                     // 离开页面时若还在录音，立即停止并丢弃（不发送）
                     if recorder.isRecording {
                         isPressing = false
@@ -189,18 +194,13 @@ struct ChatView: View {
                 scrollToBottom(proxy)
             }
             .onReceive(NotificationCenter.default.publisher(
-                for: UIResponder.keyboardWillShowNotification)) { note in
-                guard !messages.isEmpty else { return }
-                let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-                // 用键盘自身的时长与曲线滚动列表：底部消息和输入栏一起上移，
-                // 不会出现「先被输入栏挡住、动画结束再补滚一下」的错位感
-                withAnimation(.timingCurve(0.17, 0.59, 0.40, 0.71, duration: duration)) {
-                    proxy.scrollTo(bottomAnchor, anchor: .bottom)
-                }
-                // 键盘动画结束后校准一次，覆盖懒加载行高变化
-                DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.05) {
-                    proxy.scrollTo(bottomAnchor, anchor: .bottom)
-                }
+                for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+                followKeyboard(proxy, note: note)
+            }
+            .onReceive(NotificationCenter.default.publisher(
+                for: UIResponder.keyboardWillHideNotification)) { note in
+                // 部分收起路径只发 WillHide，这里兜底走同一套跟随逻辑
+                followKeyboard(proxy, note: note)
             }
             .onAppear {
                 scrollToBottom(proxy, animated: false)
@@ -228,8 +228,32 @@ struct ChatView: View {
 
     // MARK: - 键盘跟随
 
-    // 输入栏的键盘跟随由系统 safeAreaInset 自动完成（见 body），
-    // 只需在键盘弹出时把列表同步滚到底部。
+    /// 键盘升降期间逐帧把消息列表贴到底部。
+    /// 系统的键盘避让动画每一帧都会改变列表可视区高度，只在开始/结束时各滚一次，
+    /// 会出现「消息先被输入栏挡住、最后再跳一下」的错位感；
+    /// 这里在整个键盘动画期间跟随每个刷新帧重新贴底，列表底部始终贴着输入栏顶边，
+    /// 弹出与收回都与键盘同步。
+    private func followKeyboard(_ proxy: ScrollViewProxy, note: Notification) {
+        guard !messages.isEmpty else { return }
+        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+        let scroll = {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                proxy.scrollTo(bottomAnchor, anchor: .bottom)
+            }
+        }
+        keyboardFollow?.stop()
+        keyboardFollow = nil
+        guard duration > 0.01 else {
+            // 无动画的键盘变化（例如切换输入法高度）：直接贴底即可
+            scroll()
+            return
+        }
+        let follower = KeyboardBottomFollower(duration: duration + 0.08, onTick: scroll)
+        follower.start()
+        keyboardFollow = follower
+    }
 
     private func senderName(_ msg: ChatMessage) -> String {
         if msg.fromId == (store.currentUser?.id ?? 0) { return store.currentUserName() }
@@ -534,6 +558,44 @@ private struct ScrollDismissesKeyboardCompat: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+// MARK: - 键盘跟随器
+
+/// 在键盘动画期间按屏幕刷新帧回调，让消息列表逐帧贴底。
+/// 系统键盘避让是逐帧改变列表可视区高度的，只有跟随每一帧重新贴底，
+/// 列表才能与键盘/输入栏完全同步（既不提前，也不在动画结束后补跳）。
+private final class KeyboardBottomFollower: NSObject {
+    private var link: CADisplayLink?
+    private var endTime: CFTimeInterval = 0
+    private let duration: Double
+    private let onTick: () -> Void
+
+    init(duration: Double, onTick: @escaping () -> Void) {
+        self.duration = duration
+        self.onTick = onTick
+    }
+
+    func start() {
+        stop()
+        endTime = CACurrentMediaTime() + duration
+        let link = CADisplayLink(target: self, selector: #selector(tick))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    func stop() {
+        link?.invalidate()
+        link = nil
+    }
+
+    @objc private func tick() {
+        guard CACurrentMediaTime() < endTime else {
+            stop()
+            return
+        }
+        onTick()
     }
 }
 

@@ -1050,9 +1050,11 @@ struct LiquidGlassModifier: ViewModifier {
         if #available(iOS 26.0, *) {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 // 不能用 .background 填充：它等价于纯白色，叠上后背景图根本透不出来
-                .fill(Color.white.opacity(opacity * 0.35))
-                // glassEffect 默认形状是 Capsule，不传形状的话高卡片会被渲染成胶囊/椭圆
-                .glassEffect(in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                // 白底系数放大，滑块拖动时浓淡变化才明显
+                .fill(Color.white.opacity(opacity * 0.45))
+                // .regular 玻璃太厚，整块发白且滑块几乎看不出效果；
+                // .clear 是系统给媒体背景准备的更通透的液态玻璃
+                .glassEffect(.clear, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         } else {
             ZStack {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)

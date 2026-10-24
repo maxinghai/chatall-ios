@@ -210,6 +210,8 @@ struct MomentsView: View {
             }
         }
         .padding(14)
+        // 每条动态一层圆角矩形液态玻璃（形状由 modifier 显式指定，不会再变椭圆）
+        .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 16)
     }
 }
 

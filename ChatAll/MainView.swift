@@ -266,7 +266,8 @@ struct MainView: View {
                     }
                     .padding(.vertical, 12)
                     .padding(.horizontal, 14)
-                    // 会话行不再叠加玻璃底色，直接浮在背景图上
+                    // 每行各自一层液态玻璃
+                    .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .contextMenu {

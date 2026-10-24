@@ -57,6 +57,8 @@ final class AppStore: ObservableObject {
     @Published var lastPreviews: [Int64: String] = [:]
     /// peerKey -> 最新一条消息的时间串（已按微信列表规则格式化）
     @Published var lastTimes: [Int64: String] = [:]
+    /// peerKey -> 最新一条消息的 Date（用于列表排序，与 lastTimes 同源）
+    @Published var lastMessageDates: [Int64: Date] = [:]
 
     // MARK: - 提示
     @Published var errorMessage: String? = nil
@@ -335,12 +337,14 @@ final class AppStore: ObservableObject {
     func reloadLastInfo() {
         var previews: [Int64: String] = [:]
         var times: [Int64: String] = [:]
+        var dates: [Int64: Date] = [:]
         for f in friends {
             if let last = lastMessage(f.id) {
                 let p = previewText(last)
                 if !p.isEmpty { previews[f.id] = p }
                 let t = AppConfig.listTimeString(last.createdAt)
                 if !t.isEmpty { times[f.id] = t }
+                if let d = AppConfig.parseDate(last.createdAt) { dates[f.id] = d }
             }
         }
         for g in groups {
@@ -349,10 +353,12 @@ final class AppStore: ObservableObject {
                 if !p.isEmpty { previews[g.id] = p }
                 let t = AppConfig.listTimeString(last.createdAt)
                 if !t.isEmpty { times[g.id] = t }
+                if let d = AppConfig.parseDate(last.createdAt) { dates[g.id] = d }
             }
         }
         lastPreviews = previews
         lastTimes = times
+        lastMessageDates = dates
     }
 
     private func lastMessage(_ peerId: Int64) -> ChatMessage? {
@@ -360,17 +366,13 @@ final class AppStore: ObservableObject {
         return list.last
     }
 
-    /// 某个会话的最后一条消息时间（内存没有则从磁盘读取），用于列表排序
-    func lastMessageDate(for peerId: Int64) -> Date? {
-        lastMessage(peerId).flatMap { AppConfig.parseDate($0.createdAt) }
-    }
-
-    /// 统一更新某个会话的最新预览 + 时间
+    /// 统一更新某个会话的最新预览 + 时间 + 排序日期
     private func updateLastInfo(_ peerId: Int64, with msg: ChatMessage) {
         let p = previewText(msg)
         if !p.isEmpty { lastPreviews[peerId] = p }
         let t = AppConfig.listTimeString(msg.createdAt)
         if !t.isEmpty { lastTimes[peerId] = t }
+        if let d = AppConfig.parseDate(msg.createdAt) { lastMessageDates[peerId] = d }
     }
 
     func refreshFriends() async {

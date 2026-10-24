@@ -46,11 +46,7 @@ struct MainView: View {
                         connectionBadge
                     }
                     ToolbarItem(placement: .navigationBarTrailing) {
-                        HStack(spacing: 18) {
-                            addFriendButton
-                            createGroupButton
-                            pendingButton
-                        }
+                        menuButton
                     }
                 }
                 .overlay(alignment: .bottom) { bottomBar }
@@ -106,7 +102,7 @@ struct MainView: View {
 
     private var connectionBadge: some View {
         // 导航栏左上角空间有限，iOS 26/27 的玻璃按钮会把文字截断，
-        // 这里只用彩色圆点表示连接状态（绿=在线、黄=连接中、红=离线）。
+        // 这里只用彩色圆点表示连接状态（绿=在线、黄=连接中、红=离线），静止不闪烁。
         // 点击圆点可手动刷新会话列表（好友 / 群组 / 未读 / 离线消息）。
         Button {
             Task { await store.reloadAll() }
@@ -115,19 +111,32 @@ struct MainView: View {
                 .fill(store.connectionState.color)
                 .frame(width: 10, height: 10)
                 .padding(6)
-                .animation(.easeInOut(duration: 0.2), value: store.connectionState)
         }
         .buttonStyle(PlainButtonStyle())
         .accessibilityLabel("连接状态：\(store.connectionState.title)，点击刷新")
     }
 
-    // MARK: - 右上角铃铛（新的朋友）
+    // MARK: - 右上角加号菜单（添加好友 / 发起群聊 / 新的朋友）
 
-    private var pendingButton: some View {
-        Button {
-            showPending = true
+    private var menuButton: some View {
+        Menu {
+            Button {
+                showSearch = true
+            } label: {
+                Label("添加好友", systemImage: "person.badge.plus")
+            }
+            Button {
+                showCreateGroup = true
+            } label: {
+                Label("发起群聊", systemImage: "person.3.fill")
+            }
+            Button {
+                showPending = true
+            } label: {
+                Label("新的朋友", systemImage: "bell")
+            }
         } label: {
-            Image(systemName: "bell")
+            Image(systemName: "plus")
                 .font(.system(size: 17, weight: .medium))
                 .overlay(alignment: .topTrailing) {
                     if store.totalPendingCount > 0 {
@@ -142,33 +151,7 @@ struct MainView: View {
                     }
                 }
         }
-        .buttonStyle(PlainButtonStyle())
-    }
-
-    // MARK: - 右上角「加好友」按钮
-
-    private var addFriendButton: some View {
-        Button {
-            showSearch = true
-        } label: {
-            Image(systemName: "person.badge.plus")
-                .font(.system(size: 17, weight: .medium))
-        }
-        .buttonStyle(PlainButtonStyle())
-        .accessibilityLabel("添加好友")
-    }
-
-    // MARK: - 右上角「添加群聊」按钮
-
-    private var createGroupButton: some View {
-        Button {
-            showCreateGroup = true
-        } label: {
-            Image(systemName: "person.3.fill")
-                .font(.system(size: 17, weight: .medium))
-        }
-        .buttonStyle(PlainButtonStyle())
-        .accessibilityLabel("发起群聊")
+        .accessibilityLabel("更多操作")
     }
 
     // MARK: - 内容
@@ -197,7 +180,7 @@ struct MainView: View {
         var rows: [ConversationRow] = []
         for f in store.friends {
             let peerId = f.id
-            let lastDate = store.lastMessageDate(for: peerId)
+            let lastDate = store.lastMessageDates[peerId]
             let preview = store.lastPreviews[peerId] ?? ""
             rows.append(ConversationRow(
                 id: peerId, isGroup: false,
@@ -210,7 +193,7 @@ struct MainView: View {
         }
         for g in store.groups {
             let peerId = g.id
-            let lastDate = store.lastMessageDate(for: peerId)
+            let lastDate = store.lastMessageDates[peerId]
             let preview = store.lastPreviews[peerId] ?? ""
             rows.append(ConversationRow(
                 id: peerId, isGroup: true,

@@ -23,7 +23,7 @@ struct ChatView: View {
     @State private var inputText = ""
     @State private var showPhotoPicker = false
     @State private var showFileImporter = false
-    @State private var previewItem: PreviewItem? = nil
+    @Binding var previewItem: PreviewItem?
     @State private var shareItem: ShareItem? = nil
     @State private var sending = false
     @StateObject private var recorder = VoiceRecorder()
@@ -48,9 +48,6 @@ struct ChatView: View {
             }
             .navigationBarTitle(title, displayMode: .inline)
             .toolbarBackground(.hidden, for: .navigationBar)
-            // 图片预览时隐藏原本的导航栏（返回按钮 + 通话按钮），
-            // 避免它们覆盖在全屏预览之上
-            .toolbar(previewItem != nil ? .hidden : .visible, for: .navigationBar)
             .toolbar {
                 // iOS 15 的 ToolbarContentBuilder 不支持 if（buildIf 需 iOS 16+），
                 // 条件判断必须放在 ToolbarItem 内部的 ViewBuilder 里。
@@ -107,13 +104,7 @@ struct ChatView: View {
                       dismissButton: .default(Text("知道了")))
             }
 
-            // 图片预览 overlay：自定义展开/关闭过渡动画
-            if let item = previewItem {
-                ImagePreviewView(urls: item.urls,
-                                 currentIndex: item.index,
-                                 sourceFrame: item.sourceFrame,
-                                 onDismiss: { previewItem = nil })
-            }
+            // 图片预览由 MainView 在导航栏之上统一承载（避免切换导航栏显隐导致页面重新布局）
 
             // 录音中 overlay：屏幕中间显示读秒 + 波形动画
             if recorder.isRecording {
@@ -182,8 +173,8 @@ struct ChatView: View {
                 .padding(.horizontal, 12)
             }
             .background(
-                // 只保留极淡的一层底色：material + 白底会把聊天背景图糊成一整片白
-                Color(.systemBackground).opacity(store.backgroundOpacity * 0.12)
+                // 消息区：液态玻璃层，不透明度可调
+                LiquidGlassOverlay(opacity: store.backgroundOpacity)
             )
             .contentShape(Rectangle())
             .onTapGesture { inputFocused = false }
@@ -285,6 +276,7 @@ struct ChatView: View {
                            onSend: sendText)
                 .frame(maxWidth: .infinity)
                 .frame(height: 34)
+                .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 10)
 
             if inputText.trimmingCharacters(in: .whitespaces).isEmpty {
                 // 按住录音
@@ -293,13 +285,12 @@ struct ChatView: View {
                         .font(.system(size: 20))
                         .foregroundColor(recorder.isRecording ? .white : .gray)
                         .frame(width: 40, height: 34)
-                        .background(recorder.isRecording ? Color.red : Color(.secondarySystemBackground))
-                        .cornerRadius(8)
+                }
+                .liquidGlass(opacity: recorder.isRecording ? 0.9 : store.backgroundOpacity, cornerRadius: 8)
+                .overlay {
                     if recorder.isRecording {
-                        Text("\(recorder.seconds)s")
-                            .font(.system(size: 10))
-                            .foregroundColor(.white)
-                            .offset(x: 34)
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.red.opacity(0.35))
                     }
                 }
                 .gesture(
@@ -321,13 +312,20 @@ struct ChatView: View {
                         .frame(width: 40, height: 34)
                         .background(Color.chatGreen)
                         .cornerRadius(8)
+                        .overlay {
+                            if #available(iOS 26.0, *) {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(.clear)
+                                    .glassEffect()
+                            }
+                        }
                 }
                 .disabled(sending)
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Rectangle().fill(.ultraThinMaterial))
+        .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 12)
     }
 
     // MARK: - 发送
@@ -753,6 +751,7 @@ struct MessageRow: View {
         .padding(.vertical, 9)
         .background(isSelf ? Color.chatGreen : Color.bubbleGray)
         .cornerRadius(14)
+        .overlay { glassBubbleBackground() }
     }
 
     private static func durationText(_ seconds: Int) -> String {
@@ -773,6 +772,7 @@ struct MessageRow: View {
             .padding(.vertical, 9)
             .background(isSelf ? Color.chatGreen : Color.bubbleGray)
             .cornerRadius(14)
+            .overlay { glassBubbleBackground() }
             .textSelection(.disabled)   // 禁用系统英文选择菜单，统一用我们自己的 contextMenu
     }
 
@@ -836,6 +836,7 @@ struct MessageRow: View {
         .padding(.vertical, 10)
         .background(isSelf ? Color.chatGreen : Color.bubbleGray)
         .cornerRadius(14)
+        .overlay { glassBubbleBackground() }
         .onTapGesture { onTapFile(message) }
     }
 
@@ -863,7 +864,24 @@ struct MessageRow: View {
         .padding(.vertical, 9)
         .background(isSelf ? Color.chatGreen : Color.bubbleGray)
         .cornerRadius(14)
+        .overlay { glassBubbleBackground() }
         .onTapGesture { onTapVoice(message) }
+    }
+
+    /// 液态玻璃聊天气泡背景（仅用于对方消息，自己消息保持绿色）
+    @ViewBuilder
+    private func glassBubbleBackground() -> some View {
+        if !isSelf {
+            if #available(iOS 26.0, *) {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.background)
+                    .opacity(store.backgroundOpacity)
+                    .glassEffect()
+            } else {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.bubbleGray)
+            }
+        }
     }
 }
 

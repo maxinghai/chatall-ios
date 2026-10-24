@@ -19,6 +19,8 @@ struct MainView: View {
     @State private var showPending = false
     @State private var remarkTarget: FriendItem? = nil
     @State private var showMoments = false
+    /// 聊天页图片预览（挂在导航栏之上，避免切换导航栏显隐导致页面重新布局抖动）
+    @State private var previewItem: PreviewItem? = nil
 
     /// 悬浮底栏占用的高度（内容区需要留白，避免被遮挡）
     private let bottomBarSpace: CGFloat = 86
@@ -81,6 +83,16 @@ struct MainView: View {
                 CallMiniOverlay(call: store.call) {
                     store.call.restoreUI()
                 }
+            }
+
+            // 图片全屏预览：放在 NavigationView 之外，才能盖住导航栏（返回 / 通话按钮），
+            // 同时不改动聊天页安全区，收起预览时页面不会重新布局、不会抖动
+            if let item = previewItem {
+                ImagePreviewView(urls: item.urls,
+                                 currentIndex: item.index,
+                                 sourceFrame: item.sourceFrame,
+                                 onDismiss: { previewItem = nil })
+                    .zIndex(2)
             }
         }
         .onChange(of: store.toastMessage) { value in
@@ -223,7 +235,8 @@ struct MainView: View {
                 NavigationLink(destination: ChatView(peerId: row.id,
                                                      isGroup: row.isGroup,
                                                      title: row.name,
-                                                     avatar: row.avatar)) {
+                                                     avatar: row.avatar,
+                                                     previewItem: $previewItem)) {
                     HStack(spacing: 12) {
                         ZStack(alignment: .bottomTrailing) {
                             AvatarView(name: row.name, avatar: row.avatar, size: 44)
@@ -260,7 +273,6 @@ struct MainView: View {
                 }
             }
         }
-        .listStyle(PlainListStyle())
         .refreshable {
             await store.reloadAll()
         }
@@ -489,7 +501,6 @@ struct PendingRequestsSheet: View {
                     .padding(.vertical, 4)
                 }
             }
-            .listStyle(PlainListStyle())
             .liquidGlassList(opacity: store.backgroundOpacity)
             .navigationBarTitle("新的朋友", displayMode: .inline)
             .toolbarBackground(.hidden, for: .navigationBar)
@@ -547,7 +558,6 @@ struct SearchUserSheet: View {
                         Text("没有找到用户").foregroundColor(.gray)
                     }
                 }
-                .listStyle(PlainListStyle())
                 .liquidGlassList(opacity: store.backgroundOpacity)
 
                 HStack {
@@ -623,7 +633,6 @@ struct CreateGroupSheet: View {
                         }
                     }
                 }
-                .listStyle(PlainListStyle())
                 .liquidGlassList(opacity: store.backgroundOpacity)
             }
             .navigationBarTitle("发起群聊", displayMode: .inline)

@@ -31,6 +31,8 @@ struct ImagePreviewView: View {
     @State private var heroFrame: CGRect = .zero
     @State private var heroImage: UIImage?
     @State private var heroCornerRadius: CGFloat = 10
+    /// hero 的填充方式：展开时按 fit（保持整图、不变形），收起时改 fill（与气泡里裁剪显示的缩略图对齐）
+    @State private var heroFill = false
 
     // 缩放 & 平移（当前页）
     @State private var scale: CGFloat = 1
@@ -104,7 +106,8 @@ struct ImagePreviewView: View {
                     .opacity(chromeOpacity)
                     .allowsHitTesting(heroPhase == .showing && !isDismissing)
             }
-            .statusBar(hidden: true)
+            // 不再隐藏状态栏：显隐状态栏会改动窗口安全区，导致底层页面重新布局，
+            // 收起预览时出现整页位移抖动。预览本身已全屏铺满黑色，状态栏区域也被覆盖。
             .onAppear {
                 viewSize = geo.size
                 playEnterAnimation(in: screenRect)
@@ -139,8 +142,9 @@ struct ImagePreviewView: View {
         if let image = heroImage, (heroPhase == .expanding || heroPhase == .closing) {
             Image(uiImage: image)
                 .resizable()
-                .aspectRatio(contentMode: .fit)
+                .aspectRatio(contentMode: heroFill ? .fill : .fit)
                 .frame(width: heroFrame.width, height: heroFrame.height)
+                .clipped()
                 .position(x: heroFrame.midX, y: heroFrame.midY)
                 .cornerRadius(heroCornerRadius)
         }
@@ -171,6 +175,7 @@ struct ImagePreviewView: View {
         // 同帧启动：hero 从缩略图位置放大，背景同步变黑
         heroImage = img
         heroPhase = .expanding
+        heroFill = false
         // 起始 frame 取图片在缩略图内的 fit rect（保持图片宽高比），
         // 与目标 fitFrame 宽高比一致，动画过程中图片不变形、不闪烁
         heroFrame = fitFrame(for: img.size, in: source)
@@ -226,6 +231,9 @@ struct ImagePreviewView: View {
 
         heroImage = img
         heroCornerRadius = 0
+        // 收起时改 fill：气泡里显示的是裁剪填充的缩略图，末帧与气泡完全对齐，
+        // 避免图片缩回到气泡瞬间出现尺寸跳变
+        heroFill = true
 
         // 从“当前真实渲染位置”起飞：
         // pager 的 dismissOffset/offset 会被 dismissScale 统一缩放，这里必须同比例计算，
@@ -244,8 +252,8 @@ struct ImagePreviewView: View {
         )
 
         withAnimation(fadeOut) {
-            // 回到图片在缩略图内的 fit rect（与展开动画对称，保持宽高比不变形）
-            heroFrame = fitFrame(for: img.size, in: source)
+            // 缩回气泡的完整 frame（fill 裁剪方式与气泡一致，末帧无缝衔接）
+            heroFrame = source
             heroCornerRadius = 10
             bgOpacity = 0
         }

@@ -36,16 +36,12 @@ struct MomentsView: View {
                                 .padding(.top, 60)
                         }
                     }
-                    .listStyle(PlainListStyle())
                     .liquidGlassList(opacity: store.backgroundOpacity)
                     .refreshable {
                         await store.refreshMoments()
                     }
                 }
                 .navigationBarTitle("动态", displayMode: .inline)
-                // 图片预览时隐藏原本的导航栏（关闭按钮 + 发布按钮），
-                // 避免它们覆盖在全屏预览之上
-                .toolbar(previewItem != nil ? .hidden : .visible, for: .navigationBar)
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) {
                         Button("关闭") { dismiss() }
@@ -169,8 +165,7 @@ struct MomentsView: View {
                 }
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(.systemGray6).opacity(0.5))
-                .cornerRadius(6)
+                .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 6)
             }
 
             // 评论列表
@@ -190,8 +185,7 @@ struct MomentsView: View {
                 }
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(.systemGray6).opacity(0.5))
-                .cornerRadius(6)
+                .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 6)
             }
 
             // 评论输入框（点击评论按钮后展开）

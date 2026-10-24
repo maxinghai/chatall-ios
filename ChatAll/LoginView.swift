@@ -49,8 +49,7 @@ struct LoginView: View {
                             .disableAutocorrection(true)
                     }
                     .padding(12)
-                    .background(Color(.secondarySystemBackground))
-                    .cornerRadius(10)
+                    .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 10)
 
                     HStack {
                         Image(systemName: "lock")
@@ -59,8 +58,7 @@ struct LoginView: View {
                         SecureField("密码", text: $password)
                     }
                     .padding(12)
-                    .background(Color(.secondarySystemBackground))
-                    .cornerRadius(10)
+                    .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 10)
 
                     if isRegister {
                         HStack {
@@ -70,8 +68,7 @@ struct LoginView: View {
                             TextField("昵称", text: $nickname)
                         }
                         .padding(12)
-                        .background(Color(.secondarySystemBackground))
-                        .cornerRadius(10)
+                        .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 10)
                     }
                 }
 
@@ -124,8 +121,7 @@ struct LoginView: View {
                                 .autocapitalization(.none)
                                 .disableAutocorrection(true)
                                 .padding(12)
-                                .background(Color(.secondarySystemBackground))
-                                .cornerRadius(10)
+                                .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 10)
                             Text("默认 43.248.188.28:18422，仅在自建服务器时修改")
                                 .font(.system(size: 12))
                                 .foregroundColor(.gray)

@@ -985,25 +985,100 @@ struct ChatBackgroundImageView: View {
     }
 }
 
-/// 把 List/Form 变成"完全透明"的修饰器，让页面底图透出来
-/// 用法：list.liquidGlassList(opacity: store.backgroundOpacity)
-/// 注意：不要在这里叠 material + 白底，否则会把背景图糊成一整片白
+/// 液态玻璃叠加层（矩形，用于聊天消息区等大面积区域）
+struct LiquidGlassOverlay: View {
+    let opacity: Double
+
+    var body: some View {
+        if #available(iOS 26.0, *) {
+            Rectangle()
+                .fill(.background)
+                .opacity(opacity)
+                .glassEffect()
+                .allowsHitTesting(false)
+        } else {
+            ZStack {
+                Rectangle().fill(.ultraThinMaterial)
+                Rectangle().fill(Color(.systemBackground).opacity(opacity * 0.5))
+            }
+            .allowsHitTesting(false)
+        }
+    }
+}
+
+/// 把 List/Form 变成"液态玻璃"的修饰器
+/// - iOS 26+：原生 glassEffect 圆形卡片式分组列表，每一组自然形成圆角玻璃块
+/// - iOS 16~25：回退到 .ultraThinMaterial + 极淡系统底色，保持通透
+/// opacity 越高 = 玻璃越"厚"，背景图越不透；用户滑块范围 0.15~0.95
 struct LiquidGlassListModifier: ViewModifier {
     let opacity: Double
+
     func body(content: Content) -> some View {
+        // InsetGroupedListStyle 在 iOS 13+ 就有，分组卡片式布局天然适合液态玻璃
         content
-            .scrollContentBackground(.hidden)     // 隐藏 List 默认的整块白底
-            .listRowBackground(Color.clear)       // 隐藏每一行自己的白底（关键！）
-            .background(
-                // 只保留极淡的一层底色，兼顾文字可读性
-                Color(.systemBackground).opacity(opacity * 0.12)
-            )
+            .listStyle(InsetGroupedListStyle())
+            .listSectionSpacing(14)
+            .scrollContentBackground(.hidden)
+            .listRowBackground(glassRowBackground)
+            .listRowSeparatorTint(Color(.separator).opacity(0.6))
+    }
+
+    @ViewBuilder
+    private var glassRowBackground: some View {
+        if #available(iOS 26.0, *) {
+            // iOS 26+ 原生液态玻璃：圆角卡片 + glassEffect
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.background)
+                .opacity(opacity)
+                .glassEffect()
+        } else {
+            // iOS 16~25：material 打底 + 可调系统底色
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(.systemBackground).opacity(opacity * 0.5))
+            }
+        }
     }
 }
 
 extension View {
     func liquidGlassList(opacity: Double) -> some View {
         modifier(LiquidGlassListModifier(opacity: opacity))
+    }
+
+    /// 通用液态玻璃背景（圆角矩形）
+    func liquidGlass(opacity: Double, cornerRadius: CGFloat = 12) -> some View {
+        modifier(LiquidGlassModifier(opacity: opacity, cornerRadius: cornerRadius))
+    }
+}
+
+/// 任意圆角矩形组件的液态玻璃背景（聊天气泡、输入框等）
+struct LiquidGlassModifier: ViewModifier {
+    let opacity: Double
+    let cornerRadius: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .background(glassBackground)
+    }
+
+    @ViewBuilder
+    private var glassBackground: some View {
+        if #available(iOS 26.0, *) {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(.background)
+                .opacity(opacity)
+                .glassEffect()
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(Color(.systemBackground).opacity(opacity * 0.5))
+            }
+        }
     }
 }
 
@@ -1029,6 +1104,7 @@ struct LiquidGlassBarModifier: ViewModifier {
             // 系统会自动渲染折射高光与柔和投影，无需手动加 border/shadow。
             Capsule()
                 .fill(.background)
+                .opacity(opacity)
                 .glassEffect()
         } else {
             ZStack {

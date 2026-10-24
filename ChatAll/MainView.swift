@@ -254,7 +254,7 @@ struct MainView: View {
                                 .font(.system(size: 16))
                             Text(row.subtitle)
                                 .font(.system(size: 13))
-                                .foregroundColor(.gray)
+                                .foregroundColor(.secondaryText)
                                 .lineLimit(1)
                         }
                         Spacer()
@@ -300,7 +300,7 @@ struct MainView: View {
             if let t = time, !t.isEmpty {
                 Text(t)
                     .font(.system(size: 12))
-                    .foregroundColor(.gray)
+                    .foregroundColor(.secondaryText)
             }
             if unread > 0 {
                 badge(unread)
@@ -490,7 +490,7 @@ struct PendingRequestsSheet: View {
                     LazyVStack(spacing: 10) {
                         if store.pendingRequests.isEmpty {
                             Text("暂无新的好友申请")
-                                .foregroundColor(.gray)
+                                .foregroundColor(.secondaryText)
                                 .frame(maxWidth: .infinity, alignment: .center)
                                 .padding(.top, 40)
                         }
@@ -502,7 +502,7 @@ struct PendingRequestsSheet: View {
                                         .font(.system(size: 16))
                                     Text(req.msg.isEmpty ? "请求添加你为好友" : req.msg)
                                         .font(.system(size: 13))
-                                        .foregroundColor(.gray)
+                                        .foregroundColor(.secondaryText)
                                         .lineLimit(1)
                                 }
                                 Spacer()
@@ -573,7 +573,7 @@ struct SearchUserSheet: View {
                                     AvatarView(name: user.displayName, avatar: user.avatar, size: 44)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(user.displayName).font(.system(size: 16))
-                                        Text("@\(user.username)").font(.system(size: 12)).foregroundColor(.gray)
+                                        Text("@\(user.username)").font(.system(size: 12)).foregroundColor(.secondaryText)
                                     }
                                     Spacer()
                                     Button("添加") {
@@ -587,7 +587,7 @@ struct SearchUserSheet: View {
                             }
                             if searched && results.isEmpty {
                                 Text("没有找到用户")
-                                    .foregroundColor(.gray)
+                                    .foregroundColor(.secondaryText)
                                     .frame(maxWidth: .infinity, alignment: .center)
                                     .padding(.top, 20)
                             }
@@ -599,7 +599,7 @@ struct SearchUserSheet: View {
                     HStack(spacing: 8) {
                         Text("验证消息")
                             .font(.system(size: 14))
-                            .foregroundColor(.gray)
+                            .foregroundColor(.secondaryText)
                         TextField("验证消息", text: $messageText)
                             .padding(12)
                             .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 12)
@@ -648,7 +648,7 @@ struct CreateGroupSheet: View {
                     HStack(spacing: 8) {
                         Text("群名称")
                             .font(.system(size: 15))
-                            .foregroundColor(.gray)
+                            .foregroundColor(.secondaryText)
                             .frame(width: 70, alignment: .leading)
                         TextField("请输入群名称", text: $name)
                             .padding(12)
@@ -659,7 +659,7 @@ struct CreateGroupSheet: View {
 
                     Text("选择成员（\(selected.count)）")
                         .font(.system(size: 13))
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondaryText)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 16)
                         .padding(.top, 12)
@@ -738,14 +738,14 @@ struct RemarkSheet: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("备注名")
                             .font(.system(size: 13))
-                            .foregroundColor(.gray)
+                            .foregroundColor(.secondaryText)
                             .padding(.leading, 4)
                         TextField("给 \(friend.displayName) 设置备注", text: $remark)
                             .padding(14)
                             .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                         Text("备注仅自己可见")
                             .font(.system(size: 12))
-                            .foregroundColor(.gray)
+                            .foregroundColor(.secondaryText)
                             .padding(14)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)

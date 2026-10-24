@@ -370,4 +370,7 @@ extension Color {
     static let chatGreen = Color(red: 0.027, green: 0.757, blue: 0.376)
     /// 消息气泡灰色
     static let bubbleGray = Color(red: 0.92, green: 0.92, blue: 0.92)
+    /// 浮在背景图 / 半透玻璃上的次要文字：系统 gray 在浅色照片上几乎看不清，
+    /// 改用 primary 加透明度，浅色、深色背景下都能保持可读
+    static let secondaryText = Color.primary.opacity(0.62)
 }

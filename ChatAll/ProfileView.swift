@@ -94,7 +94,7 @@ struct ProfileView: View {
 
                 Text("服务器：\(AppConfig.host)")
                     .font(.system(size: 12))
-                    .foregroundColor(.gray)
+                    .foregroundColor(.secondaryText)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.bottom, 10)
             }
@@ -181,7 +181,7 @@ struct ProfileView: View {
                         .foregroundColor(.primary)
                     Text("点击更换头像")
                         .font(.system(size: 13))
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondaryText)
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
@@ -214,7 +214,7 @@ struct ProfileView: View {
                 if let detail {
                     Text(detail)
                         .font(.system(size: 14))
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondaryText)
                         .lineLimit(1)
                 }
                 Image(systemName: "chevron.right")
@@ -290,7 +290,7 @@ private struct SheetScaffold<Content: View>: View {
                 if let subtitle {
                     Text(subtitle)
                         .font(.system(size: 13))
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondaryText)
                 }
             }
             ScrollView(showsIndicators: false) {
@@ -404,7 +404,7 @@ private struct AvatarSheet: View {
                     ProgressView()
                     Text("正在上传…")
                         .font(.system(size: 13))
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondaryText)
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -519,7 +519,7 @@ private struct BackgroundSheet: View {
                 HStack {
                     Text("预览")
                         .font(.system(size: 14))
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondaryText)
                     Spacer()
                     RoundedRectangle(cornerRadius: 10)
                         .fill(Color(.secondarySystemBackground))
@@ -565,7 +565,7 @@ private struct BackgroundSheet: View {
                         Spacer()
                         Text(String(format: "%.0f%%", (1 - store.backgroundOpacity) * 100))
                             .font(.system(size: 13))
-                            .foregroundColor(.gray)
+                            .foregroundColor(.secondaryText)
                     }
                     Slider(value: Binding<Double>(get: { store.backgroundOpacity },
                                                   set: { setOpacity($0) }),
@@ -595,7 +595,7 @@ private struct BarkSheet: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("去 Bark App 添加服务器 http://103.40.14.100:34761 取得 key 后粘贴到这里")
                         .font(.system(size: 13))
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondaryText)
                     if saved.isEmpty {
                         Text("当前状态：未绑定")
                             .font(.system(size: 13))
@@ -651,11 +651,11 @@ private struct CacheSheet: View {
                 HStack {
                     Text("图片缓存占用")
                         .font(.system(size: 14))
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondaryText)
                     Spacer()
                     Text(sizeText.isEmpty ? "计算中…" : sizeText)
                         .font(.system(size: 14))
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondaryText)
                 }
                 .padding(14)
                 .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)

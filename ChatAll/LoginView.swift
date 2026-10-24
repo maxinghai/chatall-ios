@@ -42,7 +42,7 @@ struct LoginView: View {
                 VStack(spacing: 12) {
                     HStack {
                         Image(systemName: "person")
-                            .foregroundColor(.gray)
+                            .foregroundColor(.secondaryText)
                             .frame(width: 24)
                         TextField("用户名", text: $username)
                             .autocapitalization(.none)
@@ -53,7 +53,7 @@ struct LoginView: View {
 
                     HStack {
                         Image(systemName: "lock")
-                            .foregroundColor(.gray)
+                            .foregroundColor(.secondaryText)
                             .frame(width: 24)
                         SecureField("密码", text: $password)
                     }
@@ -63,7 +63,7 @@ struct LoginView: View {
                     if isRegister {
                         HStack {
                             Image(systemName: "face.smiling")
-                                .foregroundColor(.gray)
+                                .foregroundColor(.secondaryText)
                                 .frame(width: 24)
                             TextField("昵称", text: $nickname)
                         }
@@ -107,16 +107,16 @@ struct LoginView: View {
                             Spacer()
                             Text(AppConfig.host)
                                 .font(.system(size: 13))
-                                .foregroundColor(.gray)
+                                .foregroundColor(.secondaryText)
                         }
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondaryText)
                     }
 
                     if showAdvanced {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("服务器地址（host:port）")
                                 .font(.system(size: 13))
-                                .foregroundColor(.gray)
+                                .foregroundColor(.secondaryText)
                             TextField("43.248.188.28:18422", text: $host)
                                 .autocapitalization(.none)
                                 .disableAutocorrection(true)
@@ -124,7 +124,7 @@ struct LoginView: View {
                                 .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 10)
                             Text("默认 43.248.188.28:18422，仅在自建服务器时修改")
                                 .font(.system(size: 12))
-                                .foregroundColor(.gray)
+                                .foregroundColor(.secondaryText)
                         }
                     }
                 }
@@ -137,7 +137,7 @@ struct LoginView: View {
                             .font(.system(size: 14))
                         Text("打开后无需登录，直接浏览示例数据")
                             .font(.system(size: 12))
-                            .foregroundColor(.gray)
+                            .foregroundColor(.secondaryText)
                     }
                     Spacer()
                     Toggle("", isOn: $demoMode)

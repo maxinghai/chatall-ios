@@ -33,7 +33,7 @@ struct MomentsView: View {
                             }
                             if store.moments.isEmpty {
                                 Text("还没有动态，点击右上角发布第一条吧")
-                                    .foregroundColor(.gray)
+                                    .foregroundColor(.secondaryText)
                                     .frame(maxWidth: .infinity, alignment: .center)
                                     .padding(.top, 60)
                             }
@@ -91,7 +91,7 @@ struct MomentsView: View {
                         .font(.system(size: 15, weight: .medium))
                     Text(AppConfig.listTimeString(moment.createdAt))
                         .font(.system(size: 12))
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondaryText)
                 }
                 Spacer()
                 if moment.userId == store.currentUser?.id {
@@ -103,7 +103,7 @@ struct MomentsView: View {
                         }
                     } label: {
                         Image(systemName: "ellipsis")
-                            .foregroundColor(.gray)
+                            .foregroundColor(.secondaryText)
                             .padding(8)
                     }
                 }
@@ -135,7 +135,7 @@ struct MomentsView: View {
                         if moment.likeCount > 0 {
                             Text("\(moment.likeCount)")
                                 .font(.system(size: 13))
-                                .foregroundColor(.gray)
+                                .foregroundColor(.secondaryText)
                         }
                     }
                 }
@@ -147,11 +147,11 @@ struct MomentsView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "bubble.right")
-                            .foregroundColor(.gray)
+                            .foregroundColor(.secondaryText)
                         if !moment.comments.isEmpty {
                             Text("\(moment.comments.count)")
                                 .font(.system(size: 13))
-                                .foregroundColor(.gray)
+                                .foregroundColor(.secondaryText)
                         }
                     }
                 }
@@ -280,7 +280,7 @@ private struct MomentImagesGrid: View {
                     failure: {
                         Image(systemName: "photo")
                             .font(.system(size: 22))
-                            .foregroundColor(.gray)
+                            .foregroundColor(.secondaryText)
                     })
             .frame(width: side, height: side)
             .clipped()
@@ -321,7 +321,7 @@ private struct MomentSingleImage: View {
                     failure: {
                         Image(systemName: "photo")
                             .font(.system(size: 30))
-                            .foregroundColor(.gray)
+                            .foregroundColor(.secondaryText)
                     })
             .frame(width: size.width, height: size.height)
             .clipped()
@@ -355,7 +355,7 @@ struct CreateMomentSheet: View {
                     .overlay(alignment: .topLeading) {
                         if content.isEmpty {
                             Text("分享此刻的想法...")
-                                .foregroundColor(.gray)
+                                .foregroundColor(.secondaryText)
                                 .padding(.top, 24)
                                 .padding(.leading, 20)
                         }

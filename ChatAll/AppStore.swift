@@ -1051,7 +1051,8 @@ struct LiquidGlassModifier: ViewModifier {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 // 不能用 .background 填充：它等价于纯白色，叠上后背景图根本透不出来
                 .fill(Color.white.opacity(opacity * 0.35))
-                .glassEffect()
+                // glassEffect 默认形状是 Capsule，不传形状的话高卡片会被渲染成胶囊/椭圆
+                .glassEffect(in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         } else {
             ZStack {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)

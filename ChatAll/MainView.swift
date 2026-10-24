@@ -230,13 +230,15 @@ struct MainView: View {
     }
 
     private var conversationList: some View {
-        List {
-            ForEach(conversations) { row in
-                NavigationLink(destination: ChatView(peerId: row.id,
-                                                     isGroup: row.isGroup,
-                                                     title: row.name,
-                                                     avatar: row.avatar,
-                                                     previewItem: $previewItem)) {
+        // iOS 26 的 List 自带一块清不掉的白色底盘，改用 ScrollView 彻底绕开系统列表样式
+        ScrollView {
+            LazyVStack(spacing: 10) {
+                ForEach(conversations) { row in
+                    NavigationLink(destination: ChatView(peerId: row.id,
+                                                         isGroup: row.isGroup,
+                                                         title: row.name,
+                                                         avatar: row.avatar,
+                                                         previewItem: $previewItem)) {
                     HStack(spacing: 12) {
                         ZStack(alignment: .bottomTrailing) {
                             AvatarView(name: row.name, avatar: row.avatar, size: 44)
@@ -257,11 +259,16 @@ struct MainView: View {
                         }
                         Spacer()
                         rightColumn(time: store.lastTimes[row.id], unread: row.unread)
+                        // List 外 NavigationLink 不再自动显示右侧箭头，手动补一个保持原样式
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(Color(.systemGray3))
                     }
                     .padding(.vertical, 12)
                     .padding(.horizontal, 14)
                     .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                 }
+                .buttonStyle(PlainButtonStyle())
                 .contextMenu {
                     if !row.isGroup, let friend = store.friends.first(where: { $0.id == row.id }) {
                         Button { remarkTarget = friend } label: {
@@ -274,12 +281,14 @@ struct MainView: View {
                         }
                     }
                 }
+                }
             }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
         }
         .refreshable {
             await store.reloadAll()
         }
-        .liquidGlassList(opacity: store.backgroundOpacity)
         .padding(.bottom, bottomBarSpace)
     }
 

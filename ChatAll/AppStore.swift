@@ -1049,15 +1049,15 @@ struct LiquidGlassModifier: ViewModifier {
     private var glassBackground: some View {
         if #available(iOS 26.0, *) {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(.background)
-                .opacity(opacity)
+                // 不能用 .background 填充：它等价于纯白色，叠上后背景图根本透不出来
+                .fill(Color.white.opacity(opacity * 0.35))
                 .glassEffect()
         } else {
             ZStack {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(.ultraThinMaterial)
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(Color(.systemBackground).opacity(opacity * 0.5))
+                    .fill(Color.white.opacity(opacity * 0.3))
             }
         }
     }

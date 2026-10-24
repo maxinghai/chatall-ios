@@ -28,10 +28,6 @@ struct ChatView: View {
     @State private var sending = false
     @StateObject private var recorder = VoiceRecorder()
     @State private var inputFocused = false
-    /// 键盘在底部安全区之上额外占用的空间（键盘高度 - 底部安全区高度）。
-    /// 手动驱动输入栏跟随键盘（替代 SwiftUI 自带键盘避让），
-    /// 解决收起时页面回跳、以及键盘 safe area 卡死导致输入栏悬空的问题。
-    @State private var keyboardPadding: CGFloat = 0
     /// 用户是否仍按住录音键（用于解决异步 start 与同步 end 的竞态：
     /// 快速点击时 onEnded 先于 recorder.start() 执行，isRecording 仍为 false，
     /// endRecord 会提前 return，导致录音启动后永远无法停止。）
@@ -45,89 +41,82 @@ struct ChatView: View {
             // 聊天页也铺同一张背景图
             ChatBackgroundImageView()
 
-            VStack(spacing: 0) {
-                messageArea
-                Divider()
-                inputBar
-            }
-            .padding(.bottom, keyboardPadding)
-            .navigationBarTitle(title, displayMode: .inline)
-            .toolbarBackground(.hidden, for: .navigationBar)
-            .toolbar {
-                // iOS 15 的 ToolbarContentBuilder 不支持 if（buildIf 需 iOS 16+），
-                // 条件判断必须放在 ToolbarItem 内部的 ViewBuilder 里。
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    if !isGroup {
-                        HStack(spacing: 16) {
-                            Button {
-                                store.call.startCall(peerId: peerId, mode: "AUDIO")
-                            } label: {
-                                Image(systemName: "phone")
-                            }
-                            Button {
-                                store.call.startCall(peerId: peerId, mode: "VIDEO")
-                            } label: {
-                                Image(systemName: "video")
+            // 输入栏用 safeAreaInset 挂在消息列表底部：
+            // 键盘升降完全交给系统驱动（与键盘同一动画），输入栏始终贴合键盘顶边，
+            // 不再手动计算 padding，避免出现输入栏与键盘不同步、收起时页面回跳。
+            messageArea
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    VStack(spacing: 0) {
+                        Divider()
+                        inputBar
+                    }
+                }
+                .navigationBarTitle(title, displayMode: .inline)
+                .toolbarBackground(.hidden, for: .navigationBar)
+                .toolbar {
+                    // iOS 15 的 ToolbarContentBuilder 不支持 if（buildIf 需 iOS 16+），
+                    // 条件判断必须放在 ToolbarItem 内部的 ViewBuilder 里。
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        if !isGroup {
+                            HStack(spacing: 16) {
+                                Button {
+                                    store.call.startCall(peerId: peerId, mode: "AUDIO")
+                                } label: {
+                                    Image(systemName: "phone")
+                                }
+                                Button {
+                                    store.call.startCall(peerId: peerId, mode: "VIDEO")
+                                } label: {
+                                    Image(systemName: "video")
+                                }
                             }
                         }
                     }
                 }
-            }
-            .onAppear {
-                Task { @MainActor in
-                    await store.openConversation(peerId: peerId, isGroup: isGroup)
+                .onAppear {
+                    Task { @MainActor in
+                        await store.openConversation(peerId: peerId, isGroup: isGroup)
+                    }
                 }
-            }
-            .onDisappear {
-                store.closeConversation(peerId: peerId)
-                recorder.stopPlay()
-                // 离开页面时若还在录音，立即停止并丢弃（不发送）
-                if recorder.isRecording {
-                    isPressing = false
-                    _ = recorder.stop()
+                .onDisappear {
+                    store.closeConversation(peerId: peerId)
+                    recorder.stopPlay()
+                    // 离开页面时若还在录音，立即停止并丢弃（不发送）
+                    if recorder.isRecording {
+                        isPressing = false
+                        _ = recorder.stop()
+                    }
                 }
-            }
-            .sheet(isPresented: $showPhotoPicker) {
-                PhotoPicker { images in
-                    sendImages(images)
+                .sheet(isPresented: $showPhotoPicker) {
+                    PhotoPicker { images in
+                        sendImages(images)
+                    }
                 }
-            }
-            .fileImporter(isPresented: $showFileImporter,
-                          allowedContentTypes: [.data],
-                          allowsMultipleSelection: false) { result in
-                handleFileImport(result)
-            }
-            .sheet(item: $shareItem) { item in
-                ShareSheet(url: item.url)
-            }
-            .alert(isPresented: Binding(
-                get: { store.errorMessage != nil },
-                set: { if !$0 { store.errorMessage = nil } }
-            )) {
-                Alert(title: Text("提示"),
-                      message: Text(store.errorMessage ?? ""),
-                      dismissButton: .default(Text("知道了")))
-            }
+                .fileImporter(isPresented: $showFileImporter,
+                              allowedContentTypes: [.data],
+                              allowsMultipleSelection: false) { result in
+                    handleFileImport(result)
+                }
+                .sheet(item: $shareItem) { item in
+                    ShareSheet(url: item.url)
+                }
+                .alert(isPresented: Binding(
+                    get: { store.errorMessage != nil },
+                    set: { if !$0 { store.errorMessage = nil } }
+                )) {
+                    Alert(title: Text("提示"),
+                          message: Text(store.errorMessage ?? ""),
+                          dismissButton: .default(Text("知道了")))
+                }
 
             // 图片预览由 MainView 在导航栏之上统一承载（避免切换导航栏显隐导致页面重新布局）
 
             // 录音中 overlay：屏幕中间显示读秒 + 波形动画
             if recorder.isRecording {
                 RecordingOverlayView(seconds: recorder.seconds, power: recorder.power)
+                    .ignoresSafeArea(.keyboard, edges: .bottom)
                     .transition(.opacity)
             }
-        }
-        // 关闭系统键盘避让：布局完全由 keyboardPadding 手动驱动，
-        // 输入栏与键盘同曲线同步移动，也彻底规避键盘 safe area 卡死导致的悬空。
-        .ignoresSafeArea(.keyboard, edges: .bottom)
-        .onReceive(NotificationCenter.default.publisher(
-            for: UIResponder.keyboardWillChangeFrameNotification)) { note in
-            syncKeyboardPadding(note)
-        }
-        .onReceive(NotificationCenter.default.publisher(
-            for: UIResponder.keyboardWillHideNotification)) { note in
-            // 个别收起路径只发 WillHide，这里兜底走同一套逻辑
-            syncKeyboardPadding(note)
         }
     }
 
@@ -200,14 +189,18 @@ struct ChatView: View {
                 scrollToBottom(proxy)
             }
             .onReceive(NotificationCenter.default.publisher(
-                for: UIResponder.keyboardWillShowNotification)) { _ in
-                // 键盘弹出会压缩消息区，需重新滚到底部
-                scrollToBottom(proxy)
-            }
-            .onReceive(NotificationCenter.default.publisher(
-                for: UIResponder.keyboardDidShowNotification)) { _ in
-                // 键盘动画结束后再校准一次，避免偶发遮挡最后一条
-                scrollToBottom(proxy)
+                for: UIResponder.keyboardWillShowNotification)) { note in
+                guard !messages.isEmpty else { return }
+                let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+                // 用键盘自身的时长与曲线滚动列表：底部消息和输入栏一起上移，
+                // 不会出现「先被输入栏挡住、动画结束再补滚一下」的错位感
+                withAnimation(.timingCurve(0.17, 0.59, 0.40, 0.71, duration: duration)) {
+                    proxy.scrollTo(bottomAnchor, anchor: .bottom)
+                }
+                // 键盘动画结束后校准一次，覆盖懒加载行高变化
+                DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.05) {
+                    proxy.scrollTo(bottomAnchor, anchor: .bottom)
+                }
             }
             .onAppear {
                 scrollToBottom(proxy, animated: false)
@@ -235,33 +228,8 @@ struct ChatView: View {
 
     // MARK: - 键盘跟随
 
-    /// 依据键盘目标 frame 更新底部 padding：取键盘自身的动画时长与近似曲线，
-    /// 让输入栏紧贴键盘顶边同步升降；收起时同样贴着键盘下降，不再回跳。
-    private func syncKeyboardPadding(_ note: Notification) {
-        guard let info = note.userInfo,
-              let endFrame = (info[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
-        else { return }
-        let window = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap { $0.windows }
-            .first(where: { $0.isKeyWindow })
-        // 键盘 frame 高度包含底部安全区，只取安全区之上的部分作为额外 padding
-        let screenH = window?.bounds.height ?? UIScreen.main.bounds.height
-        let baseInset = window?.safeAreaInsets.bottom ?? 0
-        let target = max(0, screenH - baseInset - endFrame.minY)
-        guard abs(target - keyboardPadding) > 0.5 else { return }
-        let duration = (info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-        if duration <= 0.01 {
-            // 无动画路径：直接落位
-            keyboardPadding = target
-        } else {
-            // iOS 键盘使用私有动画曲线，0.17/0.59/0.40/0.71 为其通用近似值，
-            // 配合键盘官方时长即可与键盘完全同步移动
-            withAnimation(Animation.timingCurve(0.17, 0.59, 0.40, 0.71, duration: duration)) {
-                keyboardPadding = target
-            }
-        }
-    }
+    // 输入栏的键盘跟随由系统 safeAreaInset 自动完成（见 body），
+    // 只需在键盘弹出时把列表同步滚到底部。
 
     private func senderName(_ msg: ChatMessage) -> String {
         if msg.fromId == (store.currentUser?.id ?? 0) { return store.currentUserName() }
@@ -807,7 +775,6 @@ struct MessageRow: View {
         .padding(.vertical, 9)
         .background(isSelf ? Color.chatGreen : Color.bubbleGray)
         .cornerRadius(14)
-        .overlay { glassBubbleBackground() }
     }
 
     private static func durationText(_ seconds: Int) -> String {
@@ -828,7 +795,6 @@ struct MessageRow: View {
             .padding(.vertical, 9)
             .background(isSelf ? Color.chatGreen : Color.bubbleGray)
             .cornerRadius(14)
-            .overlay { glassBubbleBackground() }
             .textSelection(.disabled)   // 禁用系统英文选择菜单，统一用我们自己的 contextMenu
     }
 
@@ -892,7 +858,6 @@ struct MessageRow: View {
         .padding(.vertical, 10)
         .background(isSelf ? Color.chatGreen : Color.bubbleGray)
         .cornerRadius(14)
-        .overlay { glassBubbleBackground() }
         .onTapGesture { onTapFile(message) }
     }
 
@@ -920,24 +885,7 @@ struct MessageRow: View {
         .padding(.vertical, 9)
         .background(isSelf ? Color.chatGreen : Color.bubbleGray)
         .cornerRadius(14)
-        .overlay { glassBubbleBackground() }
         .onTapGesture { onTapVoice(message) }
-    }
-
-    /// 液态玻璃聊天气泡背景（仅用于对方消息，自己消息保持绿色）
-    @ViewBuilder
-    private func glassBubbleBackground() -> some View {
-        if !isSelf {
-            if #available(iOS 26.0, *) {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.background)
-                    .opacity(store.backgroundOpacity)
-                    .glassEffect()
-            } else {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.bubbleGray)
-            }
-        }
     }
 }
 

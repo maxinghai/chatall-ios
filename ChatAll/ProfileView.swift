@@ -36,9 +36,11 @@ struct ProfileView: View {
     @State private var bgOpacity: Double = AppConfig.backgroundOpacity
 
     var body: some View {
-        Form {
-            // MARK: 头像
-            Section {
+        // iOS 26 的 Form 每个分组自带一张白色底卡（scrollContentBackground 清不掉），
+        // 改用 ScrollView 手动分组，玻璃卡才能直接浮在背景图上
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                // MARK: 头像
                 VStack(spacing: 12) {
                     AvatarView(name: nickname.isEmpty ? "我" : nickname, avatar: avatar, size: 88)
                     Button("更换头像") { showPhoto = true }
@@ -48,16 +50,15 @@ struct ProfileView: View {
                 .padding(.vertical, 14)
                 .padding(.horizontal, 14)
                 .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 16)
-            }
 
-            // MARK: 昵称
-            Section(header: Text("昵称")) {
-                TextField("请输入昵称", text: $nickname)
-                    .padding(14)
-                    .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
-            }
+                // MARK: 昵称
+                profileSection("昵称") {
+                    TextField("请输入昵称", text: $nickname)
+                        .padding(14)
+                        .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
+                }
 
-            Section {
+                // MARK: 保存资料（保持实心绿按钮）
                 Button {
                     saveProfile()
                 } label: {
@@ -67,13 +68,15 @@ struct ProfileView: View {
                         Text("保存资料").foregroundColor(.white)
                         Spacer()
                     }
+                    .padding(.vertical, 14)
+                    .background(Color.chatGreen)
+                    .cornerRadius(14)
                 }
-                .listRowBackground(Color.chatGreen)
                 .disabled(saving)
-            }
 
-            // MARK: 修改密码
-            Section(header: Text("修改密码")) {
+                // MARK: 修改密码
+                profileSection("修改密码") {
+                    VStack(spacing: 10) {
                 SecureField("旧密码", text: $oldPwd)
                     .padding(14)
                     .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
@@ -95,11 +98,13 @@ struct ProfileView: View {
                     .padding(.vertical, 12)
                     .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                 }
-                .disabled(changingPwd || oldPwd.isEmpty || newPwd.isEmpty)
-            }
+                        .disabled(changingPwd || oldPwd.isEmpty || newPwd.isEmpty)
+                    }
+                }
 
-            // MARK: 聊天背景（本地，不上传）
-            Section(header: Text("聊天背景")) {
+                // MARK: 聊天背景（本地，不上传）
+                profileSection("聊天背景") {
+                    VStack(spacing: 10) {
                 // 预览
                 HStack {
                     Text("预览")
@@ -152,10 +157,12 @@ struct ProfileView: View {
                     .onChange(of: bgOpacity) { newValue in
                         store.setBackgroundOpacity(newValue)
                     }
-            }
+                    }
+                }
 
-            // MARK: Bark 推送绑定
-            Section(header: Text("Bark 推送绑定")) {
+                // MARK: Bark 推送绑定
+                profileSection("Bark 推送绑定") {
+                    VStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("去 Bark App 添加服务器 http://103.40.14.100:34761 取得 key 后粘贴到这里")
                         .font(.system(size: 13))
@@ -192,11 +199,13 @@ struct ProfileView: View {
                     .padding(.vertical, 12)
                     .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                 }
-                .disabled(savingBark)
-            }
+                        .disabled(savingBark)
+                    }
+                }
 
-            // MARK: 缓存
-            Section(header: Text("缓存")) {
+                // MARK: 缓存
+                profileSection("缓存") {
+                    VStack(spacing: 10) {
                 HStack {
                     Text("图片缓存占用")
                         .font(.system(size: 14))
@@ -220,27 +229,31 @@ struct ProfileView: View {
                     .padding(.vertical, 12)
                     .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                 }
-            }
-
-            // MARK: 退出登录
-            Section {
-                Button("退出登录") {
-                    store.logout()
+                    }
                 }
-                .foregroundColor(.red)
-                .padding(.vertical, 12)
-                .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
-            }
 
-            Section {
+                // MARK: 退出登录
+                Button {
+                    store.logout()
+                } label: {
+                    HStack {
+                        Spacer()
+                        Text("退出登录").foregroundColor(.red)
+                        Spacer()
+                    }
+                    .padding(.vertical, 12)
+                    .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
+                }
+
                 Text("服务器：\(AppConfig.host)")
                     .font(.system(size: 12))
                     .foregroundColor(.gray)
-                    .padding(14)
-                    .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.bottom, 10)
             }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
         }
-        .liquidGlassList(opacity: store.backgroundOpacity)
         .navigationBarTitle("个人资料", displayMode: .inline)
         .toolbarBackground(.hidden, for: .navigationBar)
         .sheet(isPresented: $showPhoto) {
@@ -283,6 +296,18 @@ struct ProfileView: View {
                 barkSaved = saved
                 if barkKey.isEmpty { barkKey = saved }
             }
+        }
+    }
+
+    /// 分组标题 + 内容（替代 Form 的 Section，避开 iOS 26 系统自带的白底卡片）
+    private func profileSection<Content: View>(_ title: String,
+                                               @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 13))
+                .foregroundColor(.gray)
+                .padding(.leading, 4)
+            content()
         }
     }
 

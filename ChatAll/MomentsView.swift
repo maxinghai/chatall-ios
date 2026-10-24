@@ -25,18 +25,23 @@ struct MomentsView: View {
                     // 底图放在 NavigationView 内部，否则会被导航容器的不透明底色盖住
                     ChatBackgroundImageView()
 
-                    List {
-                        ForEach(store.moments) { moment in
-                            momentRow(moment)
+                    // iOS 26 的 List 自带白色底盘清不掉，改用 ScrollView 让玻璃卡直接浮在背景图上
+                    ScrollView {
+                        LazyVStack(spacing: 14) {
+                            ForEach(store.moments) { moment in
+                                momentRow(moment)
+                            }
+                            if store.moments.isEmpty {
+                                Text("还没有动态，点击右上角发布第一条吧")
+                                    .foregroundColor(.gray)
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                    .padding(.top, 60)
+                            }
                         }
-                        if store.moments.isEmpty {
-                            Text("还没有动态，点击右上角发布第一条吧")
-                                .foregroundColor(.gray)
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .padding(.top, 60)
-                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                        .padding(.bottom, 20)
                     }
-                    .liquidGlassList(opacity: store.backgroundOpacity)
                     .refreshable {
                         await store.refreshMoments()
                     }

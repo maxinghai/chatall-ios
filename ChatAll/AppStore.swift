@@ -1007,45 +1007,42 @@ struct LiquidGlassOverlay: View {
 }
 
 /// 把 List/Form 变成"液态玻璃"的修饰器
-/// - iOS 26+：原生 glassEffect 圆形卡片式分组列表，每一组自然形成圆角玻璃块
-/// - iOS 16~25：回退到 .ultraThinMaterial + 极淡系统底色，保持通透
+/// - 用 PlainListStyle 避免系统分组卡片自带的不透明白底盖住背景图
+/// - 每一行自己铺一张内缩的圆角玻璃卡片，真正透出背后的背景图
+/// - iOS 26+：原生 glassEffect；iOS 16~25：ultraThinMaterial 回退
 /// opacity 越高 = 玻璃越"厚"，背景图越不透；用户滑块范围 0.15~0.95
 struct LiquidGlassListModifier: ViewModifier {
     let opacity: Double
 
     func body(content: Content) -> some View {
-        // InsetGroupedListStyle 在 iOS 13+ 就有，分组卡片式布局天然适合液态玻璃
-        let base = content
-            .listStyle(InsetGroupedListStyle())
+        content
+            .listStyle(PlainListStyle())
             .scrollContentBackground(.hidden)
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
             .listRowBackground(glassRowBackground)
-            .listRowSeparatorTint(Color(.separator).opacity(0.6))
-
-        // listSectionSpacing 是 iOS 17+ API，低版本省略（用系统默认分组间距）
-        if #available(iOS 17.0, *) {
-            base.listSectionSpacing(14)
-        } else {
-            base
-        }
     }
 
+    /// 每行的玻璃卡片：横向内缩 16、上下留 3，形成悬浮卡片效果
     @ViewBuilder
     private var glassRowBackground: some View {
-        if #available(iOS 26.0, *) {
-            // iOS 26+ 原生液态玻璃：圆角卡片 + glassEffect
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.background)
-                .opacity(opacity)
-                .glassEffect()
-        } else {
-            // iOS 16~25：material 打底 + 可调系统底色
-            ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(.systemBackground).opacity(opacity * 0.5))
+        Group {
+            if #available(iOS 26.0, *) {
+                // 低浓度白 + 原生 glassEffect：既保留玻璃质感，又能透出背景图
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.white.opacity(opacity * 0.25))
+                    .glassEffect()
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.white.opacity(opacity * 0.15))
+                }
             }
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 3)
     }
 }
 

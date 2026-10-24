@@ -172,10 +172,6 @@ struct ChatView: View {
                 .padding(.bottom, 12)
                 .padding(.horizontal, 12)
             }
-            .background(
-                // 消息区：液态玻璃层，不透明度可调
-                LiquidGlassOverlay(opacity: store.backgroundOpacity)
-            )
             .contentShape(Rectangle())
             .onTapGesture { inputFocused = false }
             .onChange(of: messages.count) { _ in

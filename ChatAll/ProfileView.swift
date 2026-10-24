@@ -45,12 +45,16 @@ struct ProfileView: View {
                         .foregroundColor(.chatGreen)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
+                .padding(.vertical, 14)
+                .padding(.horizontal, 14)
+                .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 16)
             }
 
             // MARK: 昵称
             Section(header: Text("昵称")) {
                 TextField("请输入昵称", text: $nickname)
+                    .padding(14)
+                    .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
             }
 
             Section {
@@ -71,8 +75,14 @@ struct ProfileView: View {
             // MARK: 修改密码
             Section(header: Text("修改密码")) {
                 SecureField("旧密码", text: $oldPwd)
+                    .padding(14)
+                    .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                 SecureField("新密码", text: $newPwd)
+                    .padding(14)
+                    .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                 SecureField("确认新密码", text: $confirmPwd)
+                    .padding(14)
+                    .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                 Button {
                     changePassword()
                 } label: {
@@ -82,6 +92,8 @@ struct ProfileView: View {
                         Text("修改密码").foregroundColor(.chatGreen)
                         Spacer()
                     }
+                    .padding(.vertical, 12)
+                    .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                 }
                 .disabled(changingPwd || oldPwd.isEmpty || newPwd.isEmpty)
             }
@@ -104,7 +116,8 @@ struct ProfileView: View {
                                 )
                         }
                 }
-                .padding(.vertical, 2)
+                .padding(14)
+                .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
 
                 HStack {
                     PhotosPicker(selection: $bgPickerItem,
@@ -118,6 +131,8 @@ struct ProfileView: View {
                         } label: { Text("清除") }
                     }
                 }
+                .padding(14)
+                .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
 
                 HStack {
                     Text("玻璃透明度")
@@ -127,7 +142,13 @@ struct ProfileView: View {
                         .font(.system(size: 13))
                         .foregroundColor(.gray)
                 }
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
+
                 Slider(value: $bgOpacity, in: 0.15...0.95, step: 0.05)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 14)
+                    .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                     .onChange(of: bgOpacity) { newValue in
                         store.setBackgroundOpacity(newValue)
                     }
@@ -150,11 +171,14 @@ struct ProfileView: View {
                             .lineLimit(1)
                     }
                 }
-                .padding(.vertical, 2)
+                .padding(14)
+                .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
 
                 TextField("粘贴 Bark Key", text: $barkKey)
                     .autocapitalization(.none)
                     .disableAutocorrection(true)
+                    .padding(14)
+                    .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
 
                 Button {
                     saveBark()
@@ -165,6 +189,8 @@ struct ProfileView: View {
                         Text("保存").foregroundColor(.chatGreen)
                         Spacer()
                     }
+                    .padding(.vertical, 12)
+                    .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                 }
                 .disabled(savingBark)
             }
@@ -180,6 +206,9 @@ struct ProfileView: View {
                         .font(.system(size: 14))
                         .foregroundColor(.gray)
                 }
+                .padding(14)
+                .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
+
                 Button {
                     clearCache()
                 } label: {
@@ -188,6 +217,8 @@ struct ProfileView: View {
                         Text("清除缓存").foregroundColor(.chatGreen)
                         Spacer()
                     }
+                    .padding(.vertical, 12)
+                    .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                 }
             }
 
@@ -197,12 +228,16 @@ struct ProfileView: View {
                     store.logout()
                 }
                 .foregroundColor(.red)
+                .padding(.vertical, 12)
+                .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
             }
 
             Section {
                 Text("服务器：\(AppConfig.host)")
                     .font(.system(size: 12))
                     .foregroundColor(.gray)
+                    .padding(14)
+                    .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
             }
         }
         .liquidGlassList(opacity: store.backgroundOpacity)

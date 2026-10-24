@@ -204,7 +204,8 @@ struct MomentsView: View {
                 }
             }
         }
-        .padding(.vertical, 12)
+        .padding(14)
+        .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 16)
     }
 }
 

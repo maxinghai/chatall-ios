@@ -1008,8 +1008,8 @@ struct LiquidGlassOverlay: View {
 
 /// 把 List/Form 变成"液态玻璃"的修饰器
 /// - 用 PlainListStyle 避免系统分组卡片自带的不透明白底盖住背景图
-/// - 每一行自己铺一张内缩的圆角玻璃卡片，真正透出背后的背景图
-/// - iOS 26+：原生 glassEffect；iOS 16~25：ultraThinMaterial 回退
+/// - 行背景设为透明，玻璃卡片由各页面行内容通过 .liquidGlass(...) 自行添加
+///   （iOS 26 的 List 会覆盖 listRowBackground，直接在行内容加背景最可靠）
 /// opacity 越高 = 玻璃越"厚"，背景图越不透；用户滑块范围 0.15~0.95
 struct LiquidGlassListModifier: ViewModifier {
     let opacity: Double
@@ -1019,30 +1019,8 @@ struct LiquidGlassListModifier: ViewModifier {
             .listStyle(PlainListStyle())
             .scrollContentBackground(.hidden)
             .listRowSeparator(.hidden)
-            .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
-            .listRowBackground(glassRowBackground)
-    }
-
-    /// 每行的玻璃卡片：横向内缩 16、上下留 3，形成悬浮卡片效果
-    @ViewBuilder
-    private var glassRowBackground: some View {
-        Group {
-            if #available(iOS 26.0, *) {
-                // 低浓度白 + 原生 glassEffect：既保留玻璃质感，又能透出背景图
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.white.opacity(opacity * 0.25))
-                    .glassEffect()
-            } else {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.white.opacity(opacity * 0.15))
-                }
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 3)
+            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+            .listRowBackground(Color.clear)
     }
 }
 

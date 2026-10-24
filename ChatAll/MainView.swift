@@ -258,6 +258,9 @@ struct MainView: View {
                         Spacer()
                         rightColumn(time: store.lastTimes[row.id], unread: row.unread)
                     }
+                    .padding(.vertical, 12)
+                    .padding(.horizontal, 14)
+                    .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                 }
                 .contextMenu {
                     if !row.isGroup, let friend = store.friends.first(where: { $0.id == row.id }) {
@@ -498,7 +501,8 @@ struct PendingRequestsSheet: View {
                         }
                         .buttonStyle(.bordered)
                     }
-                    .padding(.vertical, 4)
+                    .padding(12)
+                    .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                 }
             }
             .liquidGlassList(opacity: store.backgroundOpacity)
@@ -553,6 +557,8 @@ struct SearchUserSheet: View {
                             .buttonStyle(.bordered)
                             .tint(Color.chatGreen)
                         }
+                        .padding(12)
+                        .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                     }
                     if searched && results.isEmpty {
                         Text("没有找到用户").foregroundColor(.gray)
@@ -630,6 +636,8 @@ struct CreateGroupSheet: View {
                                 Image(systemName: selected.contains(friend.id) ? "checkmark.circle.fill" : "circle")
                                     .foregroundColor(selected.contains(friend.id) ? .chatGreen : .gray)
                             }
+                            .padding(12)
+                            .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                         }
                     }
                 }
@@ -680,11 +688,15 @@ struct RemarkSheet: View {
             Form {
                 Section(header: Text("备注名")) {
                     TextField("给 \(friend.displayName) 设置备注", text: $remark)
+                        .padding(14)
+                        .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                 }
                 Section {
                     Text("备注仅自己可见")
                         .font(.system(size: 12))
                         .foregroundColor(.gray)
+                        .padding(14)
+                        .liquidGlass(opacity: store.backgroundOpacity, cornerRadius: 14)
                 }
             }
             .liquidGlassList(opacity: store.backgroundOpacity)

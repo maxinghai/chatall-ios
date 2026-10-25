@@ -120,9 +120,39 @@ struct ChatView: View {
                     .transition(.opacity)
             }
         }
-        // 底图放在 .background 里：不参与主布局（不会挤压消息区/输入栏），
-        // 且用 UIImageView 承载，键盘动画期间不重采样（消除有背景图时的闪烁）
-        .background(ChatBackgroundView().ignoresSafeArea())
+        // 底图作为 background 挂上去：background 不参与主布局，键盘升降时
+        // 不会挤压消息区/输入栏；图片尺寸固定，也不随 safe area 重排。
+        .background(chatBackgroundImage)
+    }
+
+    /// 聊天页底图：与其它页面同一张图、同样的 scaledToFill 裁剪方式。
+    /// 刻意不用 ChatBackgroundImageView（内部 GeometryReader 会随键盘 safe area
+    /// 逐帧重算尺寸，导致图片重采样、看起来在闪）；这里尺寸钉死为窗口大小，
+    /// 键盘弹出/收回期间图片完全静止。
+    @ViewBuilder
+    private var chatBackgroundImage: some View {
+        if let image = loadChatBackground() {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
+                .clipped()
+                .id(store.backgroundVersion)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// 底图加载（带缓存）：背景文件名固定，只能用 backgroundVersion 判断是否换图
+    private func loadChatBackground() -> UIImage? {
+        guard let url = store.backgroundURL else { return nil }
+        let key = "\(store.backgroundVersion)|\(url.path)" as NSString
+        if let cached = chatBackgroundCache.object(forKey: key) {
+            return cached
+        }
+        guard let image = UIImage(contentsOfFile: url.path) else { return nil }
+        chatBackgroundCache.setObject(image, forKey: key)
+        return image
     }
 
     /// 预先计算每条消息是否需要显示时间分隔线
@@ -679,39 +709,15 @@ private final class KeyboardSyncState: NSObject {
     }
 }
 
-// MARK: - 聊天背景（UIKit 底图）
-
-/// 聊天页底图用 UIImageView 承载，而不是 SwiftUI 的 GeometryReader + scaledToFill：
-/// contentMode 由 Core Animation 直接缩放，视图尺寸在键盘动画期间变化也不会
-/// 逐帧重新解码/重采样（有背景图时肉眼可见的"闪"就来自这里）。
-/// 作为 .background 内容使用，不参与主布局，也就不会挤压输入栏。
-private struct ChatBackgroundView: UIViewRepresentable {
-    @EnvironmentObject private var store: AppStore
-
-    final class Coordinator {
-        /// 已加载到 imageView 的背景版本，避免每次 body 更新都读磁盘
-        var loadedVersion = -1
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    func makeUIView(context: Context) -> UIImageView {
-        let view = UIImageView()
-        view.contentMode = .scaleAspectFill
-        view.clipsToBounds = true
-        view.isUserInteractionEnabled = false
-        return view
-    }
-
-    func updateUIView(_ view: UIImageView, context: Context) {
-        // 同名文件换图不会改 URL，只有 backgroundVersion 变化才需要重新读取
-        guard context.coordinator.loadedVersion != store.backgroundVersion else { return }
-        context.coordinator.loadedVersion = store.backgroundVersion
-        view.image = store.backgroundURL.flatMap { UIImage(contentsOfFile: $0.path) }
-    }
-}
-
 // MARK: - 列表滚动容器探针
+
+/// 聊天页底图缓存：背景文件名固定，用「version|路径」作 key，
+/// 换图后 backgroundVersion 变化，自然读到新 key，不会拿到旧图。
+private let chatBackgroundCache: NSCache<NSString, UIImage> = {
+    let cache = NSCache<NSString, UIImage>()
+    cache.countLimit = 3
+    return cache
+}()
 
 /// 通用视图探针：拿到某个 SwiftUI 视图底层的 UIView 本身。
 /// 用于逐帧测量输入栏的 presentation 层位置（键盘跟随的增量基准）。

@@ -8,6 +8,7 @@
 
 import SwiftUI
 import UIKit
+import QuartzCore
 import AVFoundation
 import PhotosUI
 import UniformTypeIdentifiers
@@ -56,6 +57,8 @@ struct ChatView: View {
                         Divider()
                         inputBar
                     }
+                    // 探针：拿到输入栏底层的 UIView，键盘跟随期间逐帧测量它的真实屏幕位置
+                    .background(ViewProbe { keyboardSync.barView = $0 })
                 }
                 .navigationBarTitle(title, displayMode: .inline)
                 .toolbarBackground(.hidden, for: .navigationBar)
@@ -177,16 +180,10 @@ struct ChatView: View {
                         .id(msg.id)
                     }
                     Color.clear
-                        .frame(height: 16)
+                        .frame(height: 26)
                         .background(ScrollViewProbe { scroll in
-                            let sync = keyboardSync
-                            if sync.scrollView !== scroll {
-                                sync.scrollView = scroll
-                                // 首次解析时键盘未弹出，采样静止几何作为后续目标值计算的基准
-                                if sync.restHeight == nil {
-                                    sync.restHeight = scroll.bounds.height
-                                    sync.restInsetBottom = scroll.contentInset.bottom
-                                }
+                            if keyboardSync.scrollView !== scroll {
+                                keyboardSync.scrollView = scroll
                             }
                         })
                         .id(bottomAnchor)
@@ -213,15 +210,6 @@ struct ChatView: View {
                 for: UIResponder.keyboardWillHideNotification)) { note in
                 // 部分收起路径只发 WillHide，这里兜底走同一套跟随逻辑
                 followKeyboard(note: note)
-            }
-            .onReceive(NotificationCenter.default.publisher(
-                for: UIResponder.keyboardDidHideNotification)) { _ in
-                // 键盘完全收起且动画结束后重新采样静止几何，自愈任何基准偏差
-                if let scroll = keyboardSync.scrollView {
-                    keyboardSync.restHeight = scroll.bounds.height
-                    keyboardSync.restInsetBottom = scroll.contentInset.bottom
-                }
-                keyboardSync.lastOverlap = 0
             }
             .onAppear {
                 scrollToBottom(proxy, animated: false)
@@ -251,51 +239,36 @@ struct ChatView: View {
 
     /// 键盘升降期间让消息列表与键盘同帧同步（微信的做法）。
     ///
-    /// 目标 offset 用纯几何公式计算，与时序无关：
-    ///   target = contentHeight - restHeight + 键盘覆盖高度
-    /// restHeight 是键盘完全收起时列表的高度（probe 解析与 DidHide 时采样）。
-    /// 无论 SwiftUI 内部用「收缩 frame」还是「加 contentInset」实现键盘避让，
-    /// 也无论我们的 handler 跑在 SwiftUI 应用布局之前还是之后，该公式结果一致——
-    /// 这是上一版「读通知当刻 bounds/inset」方案会算偏、导致弹出时间距偏大、
-    /// 收回时内容冲过头的根因。
-    ///
-    /// 动画用键盘通知自带的 duration + curve（curve << 16 取系统原始曲线），
-    /// offset 动画与键盘动画同一条 CoreAnimation 曲线、同帧合成，逐像素贴合。
+    /// 不算绝对目标值，改为逐帧增量跟随：CADisplayLink 每帧测量输入栏
+    /// presentation 层的真实屏幕位置（系统 safeAreaInset 驱动输入栏与键盘
+    /// 同一条动画曲线），把输入栏顶边的位移增量逐帧同步给 contentOffset。
+    /// 这样内容底部与输入栏顶边每一帧都保持固定距离，与键盘用什么曲线、
+    /// SwiftUI 何时应用布局、基准几何采样是否准确全部无关——
+    /// 这是上一版「按通知终点值跑单次 UIView 动画」在收回时会过冲回弹
+    /// （壁纸缝隙一收一放的闪动感）、终点差十几 pt 遮住已读未读的根因。
     private func followKeyboard(note: Notification) {
         let sync = keyboardSync
         guard let scrollView = sync.scrollView,
-              let restHeight = sync.restHeight,
+              sync.barView != nil,
               let info = note.userInfo,
               let endFrame = (info[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
         else { return }
         let duration = (info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-        let curve = (info[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 7
 
-        // 键盘在窗口底部的覆盖高度（完全隐藏时为 0）
+        // 键盘在窗口底部的覆盖高度（完全隐藏时为 0），只看变化量
         let windowHeight = scrollView.window?.bounds.height ?? UIScreen.main.bounds.height
         let overlap = max(0, windowHeight - endFrame.origin.y)
-        let lastOverlap = sync.lastOverlap
+        let delta = overlap - sync.lastOverlap
         sync.lastOverlap = overlap
-        guard abs(overlap - lastOverlap) > 0.5 else { return }
+        guard abs(delta) > 0.5 else { return }
 
-        let contentHeight = scrollView.contentSize.height
-        let insetBottom = sync.restInsetBottom
+        // 微信行为：只有本来就贴着底才跟随；用户上翻读历史时弹键盘不打断阅读位置。
+        // delta 容错：通知到达时 SwiftUI 可能已应用最终布局，把预期位移加回再判断
+        let liveMax = scrollView.contentSize.height + scrollView.adjustedContentInset.bottom - scrollView.bounds.height
+        guard scrollView.contentOffset.y >= liveMax - max(delta, 0) - 60 else { return }
 
-        // 微信行为：只有本来就贴着底才跟随；用户上翻读历史时弹键盘不打断阅读位置
-        let maxOffsetNow = contentHeight - restHeight + lastOverlap + insetBottom
-        guard scrollView.contentOffset.y >= maxOffsetNow - 40 else { return }
-
-        let target = contentHeight - restHeight + overlap + insetBottom
-        let minOffset = -scrollView.adjustedContentInset.top
-        guard target > minOffset else { return } // 内容不足一屏：保持顶对齐不动（与微信一致）
-
-        // beginFromCurrentState：动画中途被打断（收回一半又弹出）时从当前位置平滑接力
-        let options = UIView.AnimationOptions(rawValue: curve << 16).union(.beginFromCurrentState)
-        UIView.animate(withDuration: duration, delay: 0, options: options) {
-            // 动画 block 内必须用 animated: false，否则 UIScrollView 会跑自带的
-            // easeOut 动画，覆盖掉 block 的曲线参数
-            scrollView.setContentOffset(CGPoint(x: 0, y: target), animated: false)
-        }
+        // 动画时长略加余量，覆盖 SwiftUI 布局收尾的尾巴帧
+        sync.startFollow(duration: duration + 0.15)
     }
 
     private func senderName(_ msg: ChatMessage) -> String {
@@ -606,20 +579,109 @@ private struct ScrollDismissesKeyboardCompat: ViewModifier {
 
 // MARK: - 键盘跟随状态
 
-/// 键盘跟随的共享状态。引用类型：内部字段在键盘动画期间频繁变化，
+/// 键盘跟随的共享状态与逐帧驱动器。引用类型：内部字段在键盘动画期间频繁变化，
 /// 若用 @State 承载会每次都触发整页 body 重算（收回时的闪烁来源之一）。
-private final class KeyboardSyncState {
+private final class KeyboardSyncState: NSObject {
     /// 消息列表底层的 UIScrollView（由 ScrollViewProbe 解析）
     var scrollView: UIScrollView?
-    /// 键盘完全收起时列表的高度（probe 首次解析与 keyboardDidHide 时采样）
-    var restHeight: CGFloat?
-    /// 键盘完全收起时列表的底部 contentInset（同上采样）
-    var restInsetBottom: CGFloat = 0
+    /// 输入栏底层的 UIView（由 ViewProbe 解析），跟随期间逐帧测它的真实屏幕位置
+    weak var barView: UIView?
     /// 上一次通知里键盘的覆盖高度（用于算变化量与「是否贴底」判断）
     var lastOverlap: CGFloat = 0
+
+    /// 逐帧跟随的 displayLink（跟随期间存在，其余时间为 nil）
+    private var link: CADisplayLink?
+    /// 跟随截止时间（通知动画时长 + 少量余量）
+    private var endTime: CFTimeInterval = 0
+    /// 上一帧测得的输入栏顶边 y（window 坐标）
+    private var lastBarTop: CGFloat = 0
+
+    deinit { stopFollow() }
+
+    /// 开始逐帧跟随：记录输入栏当前位置作为增量基准
+    func startFollow(duration: CFTimeInterval) {
+        stopFollow()
+        guard let top = measuredBarTop() else { return }
+        lastBarTop = top
+        endTime = CACurrentMediaTime() + duration
+        let link = CADisplayLink(target: self, selector: #selector(tick))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    func stopFollow() {
+        link?.invalidate()
+        link = nil
+    }
+
+    @objc private func tick() {
+        if CACurrentMediaTime() >= endTime {
+            settle()
+            stopFollow()
+            return
+        }
+        followOneFrame()
+    }
+
+    /// 测输入栏顶边在屏幕上的真实 y：沿 layer 链累加 presentation 层的 frame.minY，
+    /// 动画中途拿到的就是当前帧正在渲染的位置（model 层在通知到达时已是终点值）
+    private func measuredBarTop() -> CGFloat? {
+        guard let bar = barView else { return nil }
+        var y: CGFloat = 0
+        var layer: CALayer? = bar.layer
+        while let current = layer {
+            let effective = current.presentation() ?? current
+            y += effective.frame.minY
+            layer = current.superlayer
+        }
+        return y
+    }
+
+    /// 把输入栏本帧的位移增量同步给列表：输入栏往下走 d，内容就跟着往下走 d
+    private func followOneFrame() {
+        guard let scrollView, let top = measuredBarTop() else { return }
+        let d = top - lastBarTop
+        lastBarTop = top
+        guard abs(d) > 0.01 else { return }
+        var y = scrollView.contentOffset.y - d
+        let inset = scrollView.adjustedContentInset
+        let minY = -inset.top
+        let maxY = scrollView.contentSize.height + inset.bottom - scrollView.bounds.height
+        y = min(max(y, minY), max(minY, maxY))
+        scrollView.setContentOffset(CGPoint(x: 0, y: y), animated: false)
+    }
+
+    /// 跟随结束：只做范围钳制校正，与当前值差距大于 0.5 才动，避免收尾抖动
+    private func settle() {
+        guard let scrollView else { return }
+        let inset = scrollView.adjustedContentInset
+        let minY = -inset.top
+        let maxY = scrollView.contentSize.height + inset.bottom - scrollView.bounds.height
+        let clamped = min(max(scrollView.contentOffset.y, minY), max(minY, maxY))
+        if abs(clamped - scrollView.contentOffset.y) > 0.5 {
+            scrollView.setContentOffset(CGPoint(x: 0, y: clamped), animated: false)
+        }
+    }
 }
 
 // MARK: - 列表滚动容器探针
+
+/// 通用视图探针：拿到某个 SwiftUI 视图底层的 UIView 本身。
+/// 用于逐帧测量输入栏的 presentation 层位置（键盘跟随的增量基准）。
+private struct ViewProbe: UIViewRepresentable {
+    let onResolve: (UIView) -> Void
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        DispatchQueue.main.async { onResolve(view) }
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        DispatchQueue.main.async { onResolve(uiView) }
+    }
+}
 
 /// 放在 ScrollView 内容里，沿 superview 链找到承载列表的底层 UIScrollView。
 /// 拿到后就能在键盘通知里用 UIKit 动画直接驱动 contentOffset（见 followKeyboard），

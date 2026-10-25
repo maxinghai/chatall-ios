@@ -14,7 +14,6 @@ import AVFoundation
 import AVKit
 import CoreMedia
 import UIKit
-import Accelerate
 import WebRTC
 
 enum CallState: Int {
@@ -182,7 +181,7 @@ final class CallManager: NSObject, ObservableObject {
         layer.videoGravity = .resizeAspectFill
 
         let contentSource = AVPictureInPictureController
-            .ContentSource(sampleBufferDisplayLayer: layer)
+            .ContentSource(sampleBufferDisplayLayer: layer, playbackDelegate: nil)
         guard AVPictureInPictureController.isPictureInPictureSupported() else { return }
         let controller = AVPictureInPictureController(contentSource: contentSource)
         controller.delegate = self
@@ -798,15 +797,11 @@ final class PiPVideoRenderer: NSObject, RTCVideoRenderer {
         return convertI420ToPixelBuffer(buffer.toI420())
     }
 
-    /// 用 vImage 把 I420 转为 32BGRA 的 CVPixelBuffer。
-    /// vImage 的 ARGB8888 在小端 iOS 上内存字节序为 B,G,R,A，正好对应 32BGRA。
-    private static func convertI420ToPixelBuffer(_ i420: RTCI420Buffer) -> CVPixelBuffer? {
+    /// 用手写整数运算把 I420 转为 32BGRA 的 CVPixelBuffer。
+    /// PiP 窗口尺寸小，逐像素转换的性能够用，且不依赖 Accelerate/vImage 的复杂签名。
+    private static func convertI420ToPixelBuffer(_ i420: RTCI420BufferProtocol) -> CVPixelBuffer? {
         let width = Int(i420.width)
         let height = Int(i420.height)
-        let chromaW = width / 2
-        let chromaH = height / 2
-
-        guard let dataY = i420.dataY, let dataU = i420.dataU, let dataV = i420.dataV else { return nil }
 
         let attrs: [CFString: Any] = [
             kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
@@ -823,36 +818,46 @@ final class PiPVideoRenderer: NSObject, RTCVideoRenderer {
         CVPixelBufferLockBaseAddress(pb, [])
         defer { CVPixelBufferUnlockBaseAddress(pb, []) }
 
-        guard let dstData = CVPixelBufferGetBaseAddress(pb) else { return nil }
+        guard let dst = CVPixelBufferGetBaseAddress(pb) else { return nil }
         let dstBytesPerRow = CVPixelBufferGetBytesPerRow(pb)
 
-        // WebRTC 的 dataY 是 const uint8_t*，vImage_Buffer.data 是可变指针，
-        // 这里只是读取，用 mutating 转换是安全的。
-        let yPtr = UnsafeMutableRawPointer(mutating: dataY)
-        let uPtr = UnsafeMutableRawPointer(mutating: dataU)
-        let vPtr = UnsafeMutableRawPointer(mutating: dataV)
+        let yBase = i420.dataY
+        let uBase = i420.dataU
+        let vBase = i420.dataV
+        let strideY = Int(i420.strideY)
+        let strideU = Int(i420.strideU)
+        let strideV = Int(i420.strideV)
 
-        var yPlane = vImage_Buffer(
-            data: yPtr, height: vImagePixelCount(height),
-            width: vImagePixelCount(width), rowBytes: Int(i420.strideY)
-        )
-        var uPlane = vImage_Buffer(
-            data: uPtr, height: vImagePixelCount(chromaH),
-            width: vImagePixelCount(chromaW), rowBytes: Int(i420.strideU)
-        )
-        var vPlane = vImage_Buffer(
-            data: vPtr, height: vImagePixelCount(chromaH),
-            width: vImagePixelCount(chromaW), rowBytes: Int(i420.strideV)
-        )
-        var dst = vImage_Buffer(
-            data: dstData, height: vImagePixelCount(height),
-            width: vImagePixelCount(width), rowBytes: dstBytesPerRow
-        )
+        let dstBytes = dst.assumingMemoryBound(to: UInt8.self)
 
-        let error = vImageConvert_420Yp8_Cb8_Cr8ToARGB8888(
-            &yPlane, &uPlane, &vPlane, &dst, nil, 0, numericCast(kvImageNoFlags)
-        )
-        guard error == kvImageNoError else { return nil }
+        for y in 0..<height {
+            let yRow = yBase + y * strideY
+            let uRow = uBase + (y / 2) * strideU
+            let vRow = vBase + (y / 2) * strideV
+            let outRow = dstBytes + y * dstBytesPerRow
+
+            for x in 0..<width {
+                let yVal = Int(yRow[x])
+                let uVal = Int(uRow[x / 2]) - 128
+                let vVal = Int(vRow[x / 2]) - 128
+
+                // BT.601 整数系数（×256 避免浮点）
+                var r = (256 * yVal + 359 * vVal) >> 8
+                var g = (256 * yVal - 88 * uVal - 183 * vVal) >> 8
+                var b = (256 * yVal + 454 * uVal) >> 8
+
+                r = max(0, min(255, r))
+                g = max(0, min(255, g))
+                b = max(0, min(255, b))
+
+                // 32BGRA 内存布局：B, G, R, A
+                let px = x * 4
+                outRow[px]     = UInt8(b)
+                outRow[px + 1] = UInt8(g)
+                outRow[px + 2] = UInt8(r)
+                outRow[px + 3] = 255
+            }
+        }
         return pb
     }
 }

@@ -41,8 +41,12 @@ struct ChatView: View {
 
     var body: some View {
         ZStack {
-            // 聊天页也铺同一张背景图
+            // 聊天页也铺同一张背景图。
+            // 显式忽略键盘 safe area（微信的做法：背景完全不参与键盘布局）——
+            // 否则 iOS 15+ 键盘作为独立 safe area region 会改变背景 GeometryReader
+            // 的尺寸，scaledToFill 重排，键盘收回时背景跟着抖动。
             ChatBackgroundImageView()
+                .ignoresSafeArea(.keyboard, edges: .bottom)
 
             // 输入栏用 safeAreaInset 挂在消息列表底部：
             // 键盘升降完全交给系统驱动（与键盘同一动画），输入栏始终贴合键盘顶边，
@@ -228,11 +232,12 @@ struct ChatView: View {
 
     // MARK: - 键盘跟随
 
-    /// 键盘升降期间逐帧把消息列表贴到底部。
+    /// 键盘升降期间逐帧把消息列表贴到底部（对齐微信的做法：列表与键盘同帧同步）。
     /// 系统的键盘避让动画每一帧都会改变列表可视区高度，只在开始/结束时各滚一次，
     /// 会出现「消息先被输入栏挡住、最后再跳一下」的错位感；
-    /// 这里在整个键盘动画期间跟随每个刷新帧重新贴底，列表底部始终贴着输入栏顶边，
-    /// 弹出与收回都与键盘同步。
+    /// 这里通知到达立即贴一次对齐第 0 帧，动画期间跟随每个刷新帧贴底，
+    /// 动画结束后再贴一次消除 displayLink 丢帧留下的残差——
+    /// 弹出与收回全程，列表底部始终贴着输入栏顶边。
     private func followKeyboard(_ proxy: ScrollViewProxy, note: Notification) {
         guard !messages.isEmpty else { return }
         let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
@@ -245,12 +250,13 @@ struct ChatView: View {
         }
         keyboardFollow?.stop()
         keyboardFollow = nil
+        // 通知到达即贴一次（键盘动画第 0 帧），避免把首帧让给系统布局、慢一拍
+        scroll()
         guard duration > 0.01 else {
             // 无动画的键盘变化（例如切换输入法高度）：直接贴底即可
-            scroll()
             return
         }
-        let follower = KeyboardBottomFollower(duration: duration + 0.08, onTick: scroll)
+        let follower = KeyboardBottomFollower(duration: duration + 0.05, onTick: scroll, onFinish: scroll)
         follower.start()
         keyboardFollow = follower
     }
@@ -566,20 +572,26 @@ private struct ScrollDismissesKeyboardCompat: ViewModifier {
 /// 在键盘动画期间按屏幕刷新帧回调，让消息列表逐帧贴底。
 /// 系统键盘避让是逐帧改变列表可视区高度的，只有跟随每一帧重新贴底，
 /// 列表才能与键盘/输入栏完全同步（既不提前，也不在动画结束后补跳）。
+/// 结束时通过 onFinish 再贴一次，消除 displayLink 丢帧导致的末帧残差。
 private final class KeyboardBottomFollower: NSObject {
     private var link: CADisplayLink?
     private var endTime: CFTimeInterval = 0
     private let duration: Double
     private let onTick: () -> Void
+    private let onFinish: (() -> Void)?
+    /// 防止 stop() 由外部主动停止时再触发 onFinish
+    private var finished = true
 
-    init(duration: Double, onTick: @escaping () -> Void) {
+    init(duration: Double, onTick: @escaping () -> Void, onFinish: (() -> Void)? = nil) {
         self.duration = duration
         self.onTick = onTick
+        self.onFinish = onFinish
     }
 
     func start() {
         stop()
         endTime = CACurrentMediaTime() + duration
+        finished = false
         let link = CADisplayLink(target: self, selector: #selector(tick))
         link.add(to: .main, forMode: .common)
         self.link = link
@@ -593,6 +605,10 @@ private final class KeyboardBottomFollower: NSObject {
     @objc private func tick() {
         guard CACurrentMediaTime() < endTime else {
             stop()
+            if !finished {
+                finished = true
+                onFinish?()
+            }
             return
         }
         onTick()

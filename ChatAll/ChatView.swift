@@ -660,8 +660,8 @@ private struct TransparentNavBarBackground: UIViewControllerRepresentable {
 
         private weak var bar: UINavigationBar?
         private var savedAppearances: (standard: UINavigationBarAppearance,
-                                      scrollEdge: UINavigationBarAppearance,
-                                      compact: UINavigationBarAppearance)?
+                                      scrollEdge: UINavigationBarAppearance?,
+                                      compact: UINavigationBarAppearance?)?
 
         override func loadView() {
             let view = UIView()

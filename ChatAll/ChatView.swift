@@ -41,14 +41,15 @@ struct ChatView: View {
 
     var body: some View {
         ZStack {
-            // 底图容器：Color.clear + ignoresSafeArea 铺满整个窗口，bounds 恒定，
-            // 键盘升降不会改变它的位置/尺寸；图片以 topLeading 对齐、尺寸钉死为窗口大小。
-            // 之前用 .background 会在键盘弹出、ZStack 变矮时把固定尺寸的图片居中放置，
-            // 看起来就是背景整块上移。
-            Color.clear
-                .ignoresSafeArea()
-                .overlay(alignment: .topLeading) { chatBackgroundImage }
-                .allowsHitTesting(false)
+            // 底图容器：GeometryReader + ignoresSafeArea 会把布局框撑到整个窗口
+            // （含状态栏、导航栏区域），与会话列表的 ChatBackgroundImageView 一致；
+            // 图片仍以 topLeading 对齐并钉死为窗口尺寸，键盘升降时不会重采样、不会位移。
+            GeometryReader { _ in
+                chatBackgroundImage
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
 
             // 输入栏用 safeAreaInset 挂在消息列表底部：
             // 键盘升降完全交给系统驱动（与键盘同一动画），输入栏始终贴合键盘顶边，

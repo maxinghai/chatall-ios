@@ -28,10 +28,8 @@ struct ChatView: View {
     @State private var sending = false
     @StateObject private var recorder = VoiceRecorder()
     @State private var inputFocused = false
-    /// 消息列表底层的 UIScrollView（由 ScrollViewProbe 解析，见 followKeyboard）
-    @State private var listScrollView: UIScrollView?
-    /// 上一次键盘在窗口底部的覆盖高度（用于算每次键盘动画期间列表 offset 的变化量）
-    @State private var keyboardOverlap: CGFloat = 0
+    /// 键盘跟随状态（引用类型：动画期间内部变化不触发 SwiftUI 视图重算，避免闪烁）
+    @State private var keyboardSync = KeyboardSyncState()
     /// 用户是否仍按住录音键（用于解决异步 start 与同步 end 的竞态：
     /// 快速点击时 onEnded 先于 recorder.start() 执行，isRecording 仍为 false，
     /// endRecord 会提前 return，导致录音启动后永远无法停止。）
@@ -181,7 +179,15 @@ struct ChatView: View {
                     Color.clear
                         .frame(height: 16)
                         .background(ScrollViewProbe { scroll in
-                            if listScrollView !== scroll { listScrollView = scroll }
+                            let sync = keyboardSync
+                            if sync.scrollView !== scroll {
+                                sync.scrollView = scroll
+                                // 首次解析时键盘未弹出，采样静止几何作为后续目标值计算的基准
+                                if sync.restHeight == nil {
+                                    sync.restHeight = scroll.bounds.height
+                                    sync.restInsetBottom = scroll.contentInset.bottom
+                                }
+                            }
                         })
                         .id(bottomAnchor)
                 }
@@ -207,6 +213,15 @@ struct ChatView: View {
                 for: UIResponder.keyboardWillHideNotification)) { note in
                 // 部分收起路径只发 WillHide，这里兜底走同一套跟随逻辑
                 followKeyboard(note: note)
+            }
+            .onReceive(NotificationCenter.default.publisher(
+                for: UIResponder.keyboardDidHideNotification)) { _ in
+                // 键盘完全收起且动画结束后重新采样静止几何，自愈任何基准偏差
+                if let scroll = keyboardSync.scrollView {
+                    keyboardSync.restHeight = scroll.bounds.height
+                    keyboardSync.restInsetBottom = scroll.contentInset.bottom
+                }
+                keyboardSync.lastOverlap = 0
             }
             .onAppear {
                 scrollToBottom(proxy, animated: false)
@@ -236,37 +251,43 @@ struct ChatView: View {
 
     /// 键盘升降期间让消息列表与键盘同帧同步（微信的做法）。
     ///
-    /// 不能在键盘动画期间调 SwiftUI 的 scrollTo：通知到达时 SwiftUI 模型层布局已经
-    /// 跳到最终值（你看到的平滑收缩只是渲染层动画），scrollTo 会直接把内容跳到位，
-    /// 表现为「弹出时内容立马上去、收回时顿一下」，而不是跟随键盘速度。
+    /// 目标 offset 用纯几何公式计算，与时序无关：
+    ///   target = contentHeight - restHeight + 键盘覆盖高度
+    /// restHeight 是键盘完全收起时列表的高度（probe 解析与 DidHide 时采样）。
+    /// 无论 SwiftUI 内部用「收缩 frame」还是「加 contentInset」实现键盘避让，
+    /// 也无论我们的 handler 跑在 SwiftUI 应用布局之前还是之后，该公式结果一致——
+    /// 这是上一版「读通知当刻 bounds/inset」方案会算偏、导致弹出时间距偏大、
+    /// 收回时内容冲过头的根因。
     ///
-    /// 这里改用 UIKit：从通知取出键盘自己的 duration 和 curve（curve << 16 是系统
-    /// 原始动画曲线），用同一组参数对底层 UIScrollView 的 contentOffset 做
-    /// UIView.animate。offset 动画与键盘动画由 render server 同帧合成、共享同一条
-    /// 曲线，因此列表底部全程贴着输入栏顶边，速度与键盘完全一致。
+    /// 动画用键盘通知自带的 duration + curve（curve << 16 取系统原始曲线），
+    /// offset 动画与键盘动画同一条 CoreAnimation 曲线、同帧合成，逐像素贴合。
     private func followKeyboard(note: Notification) {
-        guard let scrollView = listScrollView,
+        let sync = keyboardSync
+        guard let scrollView = sync.scrollView,
+              let restHeight = sync.restHeight,
               let info = note.userInfo,
               let endFrame = (info[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
         else { return }
         let duration = (info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
         let curve = (info[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 7
 
-        // 键盘在窗口底部的覆盖高度（完全隐藏时为 0），与上次的差值即列表可视高度的变化量
+        // 键盘在窗口底部的覆盖高度（完全隐藏时为 0）
         let windowHeight = scrollView.window?.bounds.height ?? UIScreen.main.bounds.height
         let overlap = max(0, windowHeight - endFrame.origin.y)
-        let delta = overlap - keyboardOverlap
-        keyboardOverlap = overlap
-        guard abs(delta) > 0.5 else { return }
+        let lastOverlap = sync.lastOverlap
+        sync.lastOverlap = overlap
+        guard abs(overlap - lastOverlap) > 0.5 else { return }
 
-        // 动画结束时可视高度 = 当前高度 - delta（弹出变矮、收回变高）；
-        // 目标 offset = 当前 offset + delta，列表内容底部与输入栏顶部的相对位置全程不变
-        let inset = scrollView.adjustedContentInset
-        let finalBoundsHeight = scrollView.bounds.height - delta
-        let maxOffset = scrollView.contentSize.height + inset.bottom - finalBoundsHeight
-        let minOffset = -inset.top
-        guard maxOffset > minOffset else { return } // 内容不足一屏，无需跟随
-        let target = min(max(scrollView.contentOffset.y + delta, minOffset), maxOffset)
+        let contentHeight = scrollView.contentSize.height
+        let insetBottom = sync.restInsetBottom
+
+        // 微信行为：只有本来就贴着底才跟随；用户上翻读历史时弹键盘不打断阅读位置
+        let maxOffsetNow = contentHeight - restHeight + lastOverlap + insetBottom
+        guard scrollView.contentOffset.y >= maxOffsetNow - 40 else { return }
+
+        let target = contentHeight - restHeight + overlap + insetBottom
+        let minOffset = -scrollView.adjustedContentInset.top
+        guard target > minOffset else { return } // 内容不足一屏：保持顶对齐不动（与微信一致）
 
         // beginFromCurrentState：动画中途被打断（收回一半又弹出）时从当前位置平滑接力
         let options = UIView.AnimationOptions(rawValue: curve << 16).union(.beginFromCurrentState)
@@ -581,6 +602,21 @@ private struct ScrollDismissesKeyboardCompat: ViewModifier {
             content
         }
     }
+}
+
+// MARK: - 键盘跟随状态
+
+/// 键盘跟随的共享状态。引用类型：内部字段在键盘动画期间频繁变化，
+/// 若用 @State 承载会每次都触发整页 body 重算（收回时的闪烁来源之一）。
+private final class KeyboardSyncState {
+    /// 消息列表底层的 UIScrollView（由 ScrollViewProbe 解析）
+    var scrollView: UIScrollView?
+    /// 键盘完全收起时列表的高度（probe 首次解析与 keyboardDidHide 时采样）
+    var restHeight: CGFloat?
+    /// 键盘完全收起时列表的底部 contentInset（同上采样）
+    var restInsetBottom: CGFloat = 0
+    /// 上一次通知里键盘的覆盖高度（用于算变化量与「是否贴底」判断）
+    var lastOverlap: CGFloat = 0
 }
 
 // MARK: - 列表滚动容器探针

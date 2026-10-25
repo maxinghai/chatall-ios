@@ -11,7 +11,10 @@
 
 import Foundation
 import AVFoundation
+import AVKit
 import CoreMedia
+import UIKit
+import Accelerate
 import WebRTC
 
 enum CallState: Int {
@@ -42,7 +45,14 @@ final class CallManager: NSObject, ObservableObject {
     @Published var muted = false
     /// 扬声器开关（音频通话用）
     @Published var speakerOn = true
-    @Published var remoteTrack: RTCVideoTrack? = nil
+    @Published var remoteTrack: RTCVideoTrack? = nil {
+        didSet {
+            // 远端视频轨道到来时，把 PiP 渲染器挂上去（仅视频通话）
+            guard isVideo, let renderer = pipRenderer else { return }
+            oldValue?.remove(renderer)
+            remoteTrack?.add(renderer)
+        }
+    }
     @Published var localTrack: RTCVideoTrack? = nil
 
     weak var store: AppStore?
@@ -53,6 +63,15 @@ final class CallManager: NSObject, ObservableObject {
     private var capturer: RTCCameraVideoCapturer?
     private var localVideoTrack: RTCVideoTrack?
     private var localAudioTrack: RTCAudioTrack?
+
+    // MARK: - 画中画（PiP）
+    /// 把 WebRTC 远端视频帧喂给系统 PiP 窗口的渲染器
+    private var pipRenderer: PiPVideoRenderer?
+    /// 系统画中画控制器（仅视频通话使用）
+    private var pipController: AVPictureInPictureController?
+    /// App 进入后台 / 回到前台的通知监听
+    private var backgroundObserver: NSObjectProtocol?
+    private var foregroundObserver: NSObjectProtocol?
 
     private var callId = ""
     private var peerId: Int64 = 0
@@ -146,6 +165,75 @@ final class CallManager: NSObject, ObservableObject {
         usingFrontCamera.toggle()
         capturer?.stopCapture()
         startCapture(source)
+    }
+
+    // MARK: - 画中画（PiP）
+
+    /// 创建 PiP 渲染器与控制器。远端轨道尚未到来时先占位，轨道就绪后由 didSet 自动挂载。
+    private func setupPictureInPicture() {
+        guard pipRenderer == nil else { return }
+        let renderer = PiPVideoRenderer()
+        self.pipRenderer = renderer
+        // 如果远端轨道已经就绪，立即挂载
+        remoteTrack?.add(renderer)
+
+        let layer = renderer.displayLayer
+        layer.frame = CGRect(x: 0, y: 0, width: 320, height: 320)
+        layer.videoGravity = .resizeAspectFill
+
+        let contentSource = AVPictureInPictureController
+            .ContentSource(sampleBufferDisplayLayer: layer)
+        guard AVPictureInPictureController.isPictureInPictureSupported() else { return }
+        let controller = AVPictureInPictureController(contentSource: contentSource)
+        controller.delegate = self
+        self.pipController = controller
+    }
+
+    /// App 进入后台时：若正在视频通话，自动弹出系统画中画
+    private func startPictureInPictureIfNeeded() {
+        guard state == .active, isVideo,
+              let pip = pipController,
+              pip.isPictureInPicturePossible,
+              !pip.isPictureInPictureActive else { return }
+        pip.startPictureInPicture()
+    }
+
+    /// 停止画中画（回到前台或通话结束时调用）
+    private func stopPictureInPicture() {
+        guard let pip = pipController, pip.isPictureInPictureActive else { return }
+        pip.stopPictureInPicture()
+    }
+
+    /// 监听前后台切换：后台自动开 PiP，前台自动关 PiP
+    private func startLifecycleObservation() {
+        guard backgroundObserver == nil else { return }
+        backgroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil, queue: .main
+        ) { _ in
+            Task { @MainActor [weak self] in
+                self?.startPictureInPictureIfNeeded()
+            }
+        }
+        foregroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil, queue: .main
+        ) { _ in
+            Task { @MainActor [weak self] in
+                self?.stopPictureInPicture()
+            }
+        }
+    }
+
+    private func stopLifecycleObservation() {
+        if let obs = backgroundObserver {
+            NotificationCenter.default.removeObserver(obs)
+            backgroundObserver = nil
+        }
+        if let obs = foregroundObserver {
+            NotificationCenter.default.removeObserver(obs)
+            foregroundObserver = nil
+        }
     }
 
     // MARK: - 内部流程
@@ -314,6 +402,9 @@ final class CallManager: NSObject, ObservableObject {
             self.localTrack = videoTrack
             pc.add(videoTrack, streamIds: ["stream0"])
             startCapture(source)
+            // 准备画中画：创建渲染器 + PiP 控制器，等远端轨道到来后自动挂载
+            setupPictureInPicture()
+            startLifecycleObservation()
         }
 
         hasRemoteDescription = false
@@ -321,6 +412,10 @@ final class CallManager: NSObject, ObservableObject {
     }
 
     private func teardownConnection() {
+        // 把 PiP 渲染器从远端轨道上摘掉（避免野指针回调）
+        if let renderer = pipRenderer {
+            remoteTrack?.remove(renderer)
+        }
         capturer?.stopCapture()
         capturer = nil
         pc?.close()
@@ -348,6 +443,11 @@ final class CallManager: NSObject, ObservableObject {
         recordCallIfNeeded()
         // 先关闭灵动岛实时活动，再清理通话状态
         CallLiveActivityController.shared.end()
+        // 停止画中画并释放相关资源
+        stopPictureInPicture()
+        pipController = nil
+        pipRenderer = nil
+        stopLifecycleObservation()
         teardownConnection()
         state = .idle
         showUI = false
@@ -595,5 +695,164 @@ extension CallManager: @preconcurrency RTCPeerConnectionDelegate {
                 self.remoteTrack = track
             }
         }
+    }
+}
+
+// MARK: - AVPictureInPictureControllerDelegate
+
+extension CallManager: AVPictureInPictureControllerDelegate {
+
+    /// 用户点击 PiP 窗口的「返回」按钮，回到 App —— 恢复通话页
+    func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
+                                    restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
+        restoreUI()
+        completionHandler(true)
+    }
+
+    /// 用户手动关闭 PiP（点 X）：通话不挂断，保持音频继续，等待用户回到 App
+    func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+    }
+
+    /// PiP 启动失败（通常是系统资源不足或用户关闭了多任务），不影响通话本身
+    func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
+                                    failedToStartPictureInPictureWithError error: Error) {
+    }
+}
+
+// MARK: - PiP 视频渲染器
+
+/// 把 WebRTC 远端视频帧逐帧喂给 AVSampleBufferDisplayLayer，
+/// 再由 AVPictureInPictureController 把这个 layer 渲染到系统画中画窗口。
+///
+/// 帧来源有两种：
+///   - RTCCVPixelBuffer：VideoToolbox 解码后的 CVPixelBuffer，直接用
+///   - RTCI420Buffer：兜底用 vImage 转成 32BGRA 的 CVPixelBuffer
+final class PiPVideoRenderer: NSObject, RTCVideoRenderer {
+
+    /// 交给 AVPictureInPictureController 的显示层
+    let displayLayer = AVSampleBufferDisplayLayer()
+
+    /// 逐帧递增的展示时间戳（PiP 需要每帧有不同的 PTS，否则会丢帧）
+    private var lastPts: CMTime = .zero
+
+    override init() {
+        super.init()
+        displayLayer.videoGravity = .resizeAspectFill
+        displayLayer.frame = CGRect(x: 0, y: 0, width: 320, height: 320)
+    }
+
+    // MARK: - RTCVideoRenderer
+
+    func setSize(_ size: CGSize) {
+        DispatchQueue.main.async { [weak self] in
+            self?.displayLayer.frame = CGRect(origin: .zero, size: size)
+        }
+    }
+
+    func renderFrame(_ frame: RTCVideoFrame?) {
+        guard let frame = frame,
+              let pixelBuffer = Self.pixelBuffer(from: frame.buffer) else { return }
+
+        // 用递增的 PTS 构造 sample buffer（30fps 步进）
+        lastPts = CMTimeAdd(lastPts, CMTime(value: 1, timescale: 30))
+        var timing = CMSampleTimingInfo(
+            duration: .invalid,
+            presentationTimeStamp: lastPts,
+            decodeTimeStamp: .invalid
+        )
+
+        var formatDesc: CMVideoFormatDescription?
+        CMVideoFormatDescriptionCreateForImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: pixelBuffer,
+            formatDescriptionOut: &formatDesc
+        )
+        guard let desc = formatDesc else { return }
+
+        var sampleBuffer: CMSampleBuffer?
+        CMSampleBufferCreateForImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: pixelBuffer,
+            dataReady: true,
+            makeDataReadyCallback: nil,
+            refcon: nil,
+            formatDescription: desc,
+            sampleTiming: &timing,
+            sampleBufferOut: &sampleBuffer
+        )
+        guard let sb = sampleBuffer else { return }
+
+        // enqueue 必须在主线程
+        DispatchQueue.main.async { [weak self] in
+            self?.displayLayer.enqueue(sb)
+        }
+    }
+
+    // MARK: - 帧缓冲转换
+
+    private static func pixelBuffer(from buffer: RTCVideoFrameBuffer) -> CVPixelBuffer? {
+        if let cv = buffer as? RTCCVPixelBuffer {
+            return cv.pixelBuffer
+        }
+        // 兜底：I420 → 32BGRA
+        return convertI420ToPixelBuffer(buffer.toI420())
+    }
+
+    /// 用 vImage 把 I420 转为 32BGRA 的 CVPixelBuffer。
+    /// vImage 的 ARGB8888 在小端 iOS 上内存字节序为 B,G,R,A，正好对应 32BGRA。
+    private static func convertI420ToPixelBuffer(_ i420: RTCI420Buffer) -> CVPixelBuffer? {
+        let width = Int(i420.width)
+        let height = Int(i420.height)
+        let chromaW = width / 2
+        let chromaH = height / 2
+
+        guard let dataY = i420.dataY, let dataU = i420.dataU, let dataV = i420.dataV else { return nil }
+
+        let attrs: [CFString: Any] = [
+            kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey: width,
+            kCVPixelBufferHeightKey: height,
+            kCVPixelBufferIOSurfacePropertiesKey: [:]
+        ]
+        var pixelBuffer: CVPixelBuffer?
+        guard CVPixelBufferCreate(
+            kCFAllocatorDefault, width, height,
+            kCVPixelFormatType_32BGRA, attrs as CFDictionary, &pixelBuffer
+        ) == kCVReturnSuccess, let pb = pixelBuffer else { return nil }
+
+        CVPixelBufferLockBaseAddress(pb, [])
+        defer { CVPixelBufferUnlockBaseAddress(pb, []) }
+
+        guard let dstData = CVPixelBufferGetBaseAddress(pb) else { return nil }
+        let dstBytesPerRow = CVPixelBufferGetBytesPerRow(pb)
+
+        // WebRTC 的 dataY 是 const uint8_t*，vImage_Buffer.data 是可变指针，
+        // 这里只是读取，用 mutating 转换是安全的。
+        let yPtr = UnsafeMutableRawPointer(mutating: dataY)
+        let uPtr = UnsafeMutableRawPointer(mutating: dataU)
+        let vPtr = UnsafeMutableRawPointer(mutating: dataV)
+
+        var yPlane = vImage_Buffer(
+            data: yPtr, height: vImagePixelCount(height),
+            width: vImagePixelCount(width), rowBytes: Int(i420.strideY)
+        )
+        var uPlane = vImage_Buffer(
+            data: uPtr, height: vImagePixelCount(chromaH),
+            width: vImagePixelCount(chromaW), rowBytes: Int(i420.strideU)
+        )
+        var vPlane = vImage_Buffer(
+            data: vPtr, height: vImagePixelCount(chromaH),
+            width: vImagePixelCount(chromaW), rowBytes: Int(i420.strideV)
+        )
+        var dst = vImage_Buffer(
+            data: dstData, height: vImagePixelCount(height),
+            width: vImagePixelCount(width), rowBytes: dstBytesPerRow
+        )
+
+        let error = vImageConvert_420Yp8_Cb8_Cr8ToARGB8888(
+            &yPlane, &uPlane, &vPlane, &dst, nil, 0, numericCast(kvImageNoFlags)
+        )
+        guard error == kvImageNoError else { return nil }
+        return pb
     }
 }

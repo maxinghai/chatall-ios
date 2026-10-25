@@ -7,8 +7,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "1.0.3"
-    CURRENT_PROJECT_VERSION: "4"
+    MARKETING_VERSION: "2.0.0"
+    CURRENT_PROJECT_VERSION: "5"
     SWIFT_VERSION: "5.9"
 
 packages:
@@ -41,8 +41,8 @@ targets:
         CFBundleLocalizations:
           - zh-Hans
         CFBundleDisplayName: 聊天
-        CFBundleShortVersionString: "1.0.3"
-        CFBundleVersion: "4"
+        CFBundleShortVersionString: "2.0.0"
+        CFBundleVersion: "5"
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities:

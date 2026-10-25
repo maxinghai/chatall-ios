@@ -12,7 +12,7 @@ ChatAll 是一个自建的即时通讯客户端，支持单聊、群聊、图片
 | 语言 | Swift 5.9 |
 | UI | SwiftUI，iOS 16.1+ |
 | 最低系统 | iOS 16.1 |
-| 版本 | 1.0.3（Build 4），Bundle ID `com.chat.chatall` |
+| 版本 | 2.0.0（Build 5），Bundle ID `com.chat.chatall` |
 | 工程生成 | XcodeGen（`project.yml`） |
 | 实时通话 | stasel/WebRTC 155.0.0 |
 | 画中画 | `AVPictureInPictureController` + `AVSampleBufferDisplayLayer` |

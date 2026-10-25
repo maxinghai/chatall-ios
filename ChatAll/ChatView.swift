@@ -42,11 +42,14 @@ struct ChatView: View {
     var body: some View {
         ZStack {
             // 聊天页也铺同一张背景图。
-            // 显式忽略键盘 safe area（微信的做法：背景完全不参与键盘布局）——
-            // 否则 iOS 15+ 键盘作为独立 safe area region 会改变背景 GeometryReader
-            // 的尺寸，scaledToFill 重排，键盘收回时背景跟着抖动。
+            // 关键：把背景尺寸钉死在屏幕大小上（而不是让它按可用区域自适应）。
+            // ChatBackgroundImageView 内部是 GeometryReader + scaledToFill，
+            // 键盘升降时根视图的 safe area 逐帧变化，GeometryReader 每帧拿到
+            // 新的建议尺寸，图片跟着重采样/重排——有背景图时肉眼就是"闪"，
+            // 纯色或白色背景看不出问题。固定尺寸后底图完全脱离键盘布局动画。
             ChatBackgroundImageView()
-                .ignoresSafeArea(.keyboard, edges: .bottom)
+                .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
+                .ignoresSafeArea()
 
             // 输入栏用 safeAreaInset 挂在消息列表底部：
             // 键盘升降完全交给系统驱动（与键盘同一动画），输入栏始终贴合键盘顶边，
@@ -262,13 +265,21 @@ struct ChatView: View {
         sync.lastOverlap = overlap
         guard abs(delta) > 0.5 else { return }
 
-        // 微信行为：只有本来就贴着底才跟随；用户上翻读历史时弹键盘不打断阅读位置。
+        // 微信行为：只有本来就贴着底才逐像素跟随；用户上翻读历史时弹键盘
+        // 不打断阅读位置，但按需求改为「弹键盘同时平滑滚到最新一条」。
         // delta 容错：通知到达时 SwiftUI 可能已应用最终布局，把预期位移加回再判断
         let liveMax = scrollView.contentSize.height + scrollView.adjustedContentInset.bottom - scrollView.bounds.height
-        guard scrollView.contentOffset.y >= liveMax - max(delta, 0) - 60 else { return }
+        let atBottom = scrollView.contentOffset.y >= liveMax - max(delta, 0) - 2
 
-        // 动画时长略加余量，覆盖 SwiftUI 布局收尾的尾巴帧
-        sync.startFollow(duration: duration + 0.15)
+        if atBottom {
+            // 贴底：逐帧增量跟随，内容底部与输入栏顶边每一帧保持固定距离
+            sync.startFollow(duration: duration + 0.15, easeToBottom: false)
+        } else if delta > 0 {
+            // 停在历史位置时弹键盘：跟随的同时平滑补齐到最新一条消息。
+            // 目标每帧按实时几何重算，不受 SwiftUI 何时应用键盘布局的影响，
+            // 最终必然精确停在底部；时长按距离单独给，保证整段滚动能收敛。
+            sync.startFollow(duration: 0.5, easeToBottom: true)
+        }
     }
 
     private func senderName(_ msg: ChatMessage) -> String {
@@ -595,14 +606,17 @@ private final class KeyboardSyncState: NSObject {
     private var endTime: CFTimeInterval = 0
     /// 上一帧测得的输入栏顶边 y（window 坐标）
     private var lastBarTop: CGFloat = 0
+    /// 是否在跟随的同时缓动补齐到列表底部（停在历史位置时弹键盘用）
+    private var easeToBottom = false
 
     deinit { stopFollow() }
 
     /// 开始逐帧跟随：记录输入栏当前位置作为增量基准
-    func startFollow(duration: CFTimeInterval) {
+    func startFollow(duration: CFTimeInterval, easeToBottom: Bool = false) {
         stopFollow()
         guard let top = measuredBarTop() else { return }
         lastBarTop = top
+        self.easeToBottom = easeToBottom
         endTime = CACurrentMediaTime() + duration
         let link = CADisplayLink(target: self, selector: #selector(tick))
         link.add(to: .main, forMode: .common)
@@ -637,29 +651,37 @@ private final class KeyboardSyncState: NSObject {
         return y
     }
 
-    /// 把输入栏本帧的位移增量同步给列表：输入栏往下走 d，内容就跟着往下走 d
+    /// 把输入栏本帧的位移增量同步给列表：输入栏往下走 d，内容就跟着往下走 d。
+    /// easeToBottom 模式下再叠加一段向底部的缓动，逐帧逼近最新消息处。
     private func followOneFrame() {
         guard let scrollView, let top = measuredBarTop() else { return }
         let d = top - lastBarTop
         lastBarTop = top
-        guard abs(d) > 0.01 else { return }
-        var y = scrollView.contentOffset.y - d
         let inset = scrollView.adjustedContentInset
         let minY = -inset.top
-        let maxY = scrollView.contentSize.height + inset.bottom - scrollView.bounds.height
-        y = min(max(y, minY), max(minY, maxY))
+        let maxY = max(minY, scrollView.contentSize.height + inset.bottom - scrollView.bounds.height)
+        var y = scrollView.contentOffset.y - d
+        if easeToBottom {
+            let gap = maxY - y
+            // 0.22/帧：约 0.5s 内收敛到 1pt 以内，收尾由 settle() 精确补齐
+            if gap > 0.5 { y = min(y + gap * 0.22, maxY) }
+        }
+        y = min(max(y, minY), maxY)
+        guard abs(y - scrollView.contentOffset.y) > 0.01 else { return }
         scrollView.setContentOffset(CGPoint(x: 0, y: y), animated: false)
     }
 
-    /// 跟随结束：只做范围钳制校正，与当前值差距大于 0.5 才动，避免收尾抖动
+    /// 跟随结束：精确落到目标位置（缓动模式下补齐到底），否则只做范围钳制校正，
+    /// 与当前值差距大于 0.5 才动，避免收尾抖动
     private func settle() {
         guard let scrollView else { return }
         let inset = scrollView.adjustedContentInset
         let minY = -inset.top
-        let maxY = scrollView.contentSize.height + inset.bottom - scrollView.bounds.height
-        let clamped = min(max(scrollView.contentOffset.y, minY), max(minY, maxY))
-        if abs(clamped - scrollView.contentOffset.y) > 0.5 {
-            scrollView.setContentOffset(CGPoint(x: 0, y: clamped), animated: false)
+        let maxY = max(minY, scrollView.contentSize.height + inset.bottom - scrollView.bounds.height)
+        let target = easeToBottom ? maxY : min(max(scrollView.contentOffset.y, minY), maxY)
+        easeToBottom = false
+        if abs(target - scrollView.contentOffset.y) > 0.5 {
+            scrollView.setContentOffset(CGPoint(x: 0, y: target), animated: false)
         }
     }
 }

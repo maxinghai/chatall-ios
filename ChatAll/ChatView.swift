@@ -129,6 +129,10 @@ struct ChatView: View {
                     .transition(.opacity)
             }
         }
+        // iOS 26：消息滚到导航栏下方时，导航栏会重新铺一层不透明白底
+        // （.toolbarBackground(.hidden) 只覆盖「贴顶」外观）。挂上探针把承载页面的
+        // UINavigationBar 的滚动态外观也改成全透明，离开时再还原。
+        .background(TransparentNavBarBackground())
     }
 
     /// 聊天页底图：与其它页面同一张图、同样的 scaledToFill 裁剪方式。
@@ -626,6 +630,90 @@ private struct TopScrollEdgeEffectHiddenCompat: ViewModifier {
             content.scrollEdgeEffectHidden(true, for: .top)
         } else {
             content
+        }
+    }
+}
+
+// MARK: - 导航栏透明化（iOS 26）
+
+/// iOS 26 的导航栏有两套外观：贴顶时用 scrollEdgeAppearance（SwiftUI 的
+/// toolbarBackground(.hidden) 会把它设成透明），内容滚到栏下方后切到
+/// standardAppearance，仍是系统默认的不透明白底，于是聊天页顶部会出现一条白条。
+/// 这里拿到承载聊天页的 UINavigationBar，把两套外观都配置成完全透明；
+/// 离开聊天页时还原原值，避免影响其它页面。
+private struct TransparentNavBarBackground: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> UIViewController {
+        TransparentNavBarController()
+    }
+
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {
+        (uiViewController as? TransparentNavBarController)?.applyIfNeeded()
+    }
+
+    final class TransparentNavBarController: UIViewController {
+        /// 统一的透明外观（同时用作「已应用」标记：bar 上的不是它就重新设置）
+        private let transparentAppearance: UINavigationBarAppearance = {
+            let appearance = UINavigationBarAppearance()
+            appearance.configureWithTransparentBackground()
+            return appearance
+        }()
+
+        private weak var bar: UINavigationBar?
+        private var savedAppearances: (standard: UINavigationBarAppearance,
+                                      scrollEdge: UINavigationBarAppearance,
+                                      compact: UINavigationBarAppearance)?
+
+        override func loadView() {
+            let view = UIView()
+            view.isUserInteractionEnabled = false
+            self.view = view
+        }
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            applyIfNeeded()
+        }
+
+        override func viewDidLayoutSubviews() {
+            super.viewDidLayoutSubviews()
+            applyIfNeeded()
+        }
+
+        override func viewWillDisappear(_ animated: Bool) {
+            super.viewWillDisappear(animated)
+            restoreAppearances()
+        }
+
+        func applyIfNeeded() {
+            // 旧系统上 toolbarBackground(.hidden) 本身就生效，不动导航栏
+            guard #available(iOS 26.0, *) else { return }
+            guard let bar = navigationController?.navigationBar else { return }
+
+            if bar !== self.bar || savedAppearances == nil {
+                savedAppearances = (bar.standardAppearance,
+                                    bar.scrollEdgeAppearance,
+                                    bar.compactAppearance)
+                self.bar = bar
+            }
+
+            guard bar.standardAppearance !== transparentAppearance
+                    || bar.scrollEdgeAppearance !== transparentAppearance
+                    || bar.compactAppearance !== transparentAppearance
+            else { return }
+
+            bar.standardAppearance = transparentAppearance
+            bar.scrollEdgeAppearance = transparentAppearance
+            bar.compactAppearance = transparentAppearance
+            bar.isTranslucent = true
+        }
+
+        private func restoreAppearances() {
+            guard let bar, let saved = savedAppearances else { return }
+            bar.standardAppearance = saved.standard
+            bar.scrollEdgeAppearance = saved.scrollEdge
+            bar.compactAppearance = saved.compact
+            self.bar = nil
+            savedAppearances = nil
         }
     }
 }

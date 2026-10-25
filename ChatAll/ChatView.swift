@@ -41,16 +41,6 @@ struct ChatView: View {
 
     var body: some View {
         ZStack {
-            // 聊天页也铺同一张背景图。
-            // 关键：把背景尺寸钉死在屏幕大小上（而不是让它按可用区域自适应）。
-            // ChatBackgroundImageView 内部是 GeometryReader + scaledToFill，
-            // 键盘升降时根视图的 safe area 逐帧变化，GeometryReader 每帧拿到
-            // 新的建议尺寸，图片跟着重采样/重排——有背景图时肉眼就是"闪"，
-            // 纯色或白色背景看不出问题。固定尺寸后底图完全脱离键盘布局动画。
-            ChatBackgroundImageView()
-                .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
-                .ignoresSafeArea()
-
             // 输入栏用 safeAreaInset 挂在消息列表底部：
             // 键盘升降完全交给系统驱动（与键盘同一动画），输入栏始终贴合键盘顶边，
             // 不再手动计算 padding，避免出现输入栏与键盘不同步、收起时页面回跳。
@@ -130,6 +120,9 @@ struct ChatView: View {
                     .transition(.opacity)
             }
         }
+        // 底图放在 .background 里：不参与主布局（不会挤压消息区/输入栏），
+        // 且用 UIImageView 承载，键盘动画期间不重采样（消除有背景图时的闪烁）
+        .background(ChatBackgroundView().ignoresSafeArea())
     }
 
     /// 预先计算每条消息是否需要显示时间分隔线
@@ -683,6 +676,38 @@ private final class KeyboardSyncState: NSObject {
         if abs(target - scrollView.contentOffset.y) > 0.5 {
             scrollView.setContentOffset(CGPoint(x: 0, y: target), animated: false)
         }
+    }
+}
+
+// MARK: - 聊天背景（UIKit 底图）
+
+/// 聊天页底图用 UIImageView 承载，而不是 SwiftUI 的 GeometryReader + scaledToFill：
+/// contentMode 由 Core Animation 直接缩放，视图尺寸在键盘动画期间变化也不会
+/// 逐帧重新解码/重采样（有背景图时肉眼可见的"闪"就来自这里）。
+/// 作为 .background 内容使用，不参与主布局，也就不会挤压输入栏。
+private struct ChatBackgroundView: UIViewRepresentable {
+    @EnvironmentObject private var store: AppStore
+
+    final class Coordinator {
+        /// 已加载到 imageView 的背景版本，避免每次 body 更新都读磁盘
+        var loadedVersion = -1
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> UIImageView {
+        let view = UIImageView()
+        view.contentMode = .scaleAspectFill
+        view.clipsToBounds = true
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ view: UIImageView, context: Context) {
+        // 同名文件换图不会改 URL，只有 backgroundVersion 变化才需要重新读取
+        guard context.coordinator.loadedVersion != store.backgroundVersion else { return }
+        context.coordinator.loadedVersion = store.backgroundVersion
+        view.image = store.backgroundURL.flatMap { UIImage(contentsOfFile: $0.path) }
     }
 }
 

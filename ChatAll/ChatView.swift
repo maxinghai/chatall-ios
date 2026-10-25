@@ -8,7 +8,6 @@
 
 import SwiftUI
 import UIKit
-import QuartzCore
 import AVFoundation
 import PhotosUI
 import UniformTypeIdentifiers
@@ -29,8 +28,10 @@ struct ChatView: View {
     @State private var sending = false
     @StateObject private var recorder = VoiceRecorder()
     @State private var inputFocused = false
-    /// 键盘升降期间逐帧贴底的驱动器（见 followKeyboard）
-    @State private var keyboardFollow: KeyboardBottomFollower?
+    /// 消息列表底层的 UIScrollView（由 ScrollViewProbe 解析，见 followKeyboard）
+    @State private var listScrollView: UIScrollView?
+    /// 上一次键盘在窗口底部的覆盖高度（用于算每次键盘动画期间列表 offset 的变化量）
+    @State private var keyboardOverlap: CGFloat = 0
     /// 用户是否仍按住录音键（用于解决异步 start 与同步 end 的竞态：
     /// 快速点击时 onEnded 先于 recorder.start() 执行，isRecording 仍为 false，
     /// endRecord 会提前 return，导致录音启动后永远无法停止。）
@@ -88,8 +89,6 @@ struct ChatView: View {
                 .onDisappear {
                     store.closeConversation(peerId: peerId)
                     recorder.stopPlay()
-                    keyboardFollow?.stop()
-                    keyboardFollow = nil
                     // 离开页面时若还在录音，立即停止并丢弃（不发送）
                     if recorder.isRecording {
                         isPressing = false
@@ -181,6 +180,9 @@ struct ChatView: View {
                     }
                     Color.clear
                         .frame(height: 16)
+                        .background(ScrollViewProbe { scroll in
+                            if listScrollView !== scroll { listScrollView = scroll }
+                        })
                         .id(bottomAnchor)
                 }
                 .padding(.top, 12)
@@ -199,12 +201,12 @@ struct ChatView: View {
             }
             .onReceive(NotificationCenter.default.publisher(
                 for: UIResponder.keyboardWillChangeFrameNotification)) { note in
-                followKeyboard(proxy, note: note)
+                followKeyboard(note: note)
             }
             .onReceive(NotificationCenter.default.publisher(
                 for: UIResponder.keyboardWillHideNotification)) { note in
                 // 部分收起路径只发 WillHide，这里兜底走同一套跟随逻辑
-                followKeyboard(proxy, note: note)
+                followKeyboard(note: note)
             }
             .onAppear {
                 scrollToBottom(proxy, animated: false)
@@ -232,33 +234,47 @@ struct ChatView: View {
 
     // MARK: - 键盘跟随
 
-    /// 键盘升降期间逐帧把消息列表贴到底部（对齐微信的做法：列表与键盘同帧同步）。
-    /// 系统的键盘避让动画每一帧都会改变列表可视区高度，只在开始/结束时各滚一次，
-    /// 会出现「消息先被输入栏挡住、最后再跳一下」的错位感；
-    /// 这里通知到达立即贴一次对齐第 0 帧，动画期间跟随每个刷新帧贴底，
-    /// 动画结束后再贴一次消除 displayLink 丢帧留下的残差——
-    /// 弹出与收回全程，列表底部始终贴着输入栏顶边。
-    private func followKeyboard(_ proxy: ScrollViewProxy, note: Notification) {
-        guard !messages.isEmpty else { return }
-        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-        let scroll = {
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                proxy.scrollTo(bottomAnchor, anchor: .bottom)
-            }
+    /// 键盘升降期间让消息列表与键盘同帧同步（微信的做法）。
+    ///
+    /// 不能在键盘动画期间调 SwiftUI 的 scrollTo：通知到达时 SwiftUI 模型层布局已经
+    /// 跳到最终值（你看到的平滑收缩只是渲染层动画），scrollTo 会直接把内容跳到位，
+    /// 表现为「弹出时内容立马上去、收回时顿一下」，而不是跟随键盘速度。
+    ///
+    /// 这里改用 UIKit：从通知取出键盘自己的 duration 和 curve（curve << 16 是系统
+    /// 原始动画曲线），用同一组参数对底层 UIScrollView 的 contentOffset 做
+    /// UIView.animate。offset 动画与键盘动画由 render server 同帧合成、共享同一条
+    /// 曲线，因此列表底部全程贴着输入栏顶边，速度与键盘完全一致。
+    private func followKeyboard(note: Notification) {
+        guard let scrollView = listScrollView,
+              let info = note.userInfo,
+              let endFrame = (info[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+        else { return }
+        let duration = (info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+        let curve = (info[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 7
+
+        // 键盘在窗口底部的覆盖高度（完全隐藏时为 0），与上次的差值即列表可视高度的变化量
+        let windowHeight = scrollView.window?.bounds.height ?? UIScreen.main.bounds.height
+        let overlap = max(0, windowHeight - endFrame.origin.y)
+        let delta = overlap - keyboardOverlap
+        keyboardOverlap = overlap
+        guard abs(delta) > 0.5 else { return }
+
+        // 动画结束时可视高度 = 当前高度 - delta（弹出变矮、收回变高）；
+        // 目标 offset = 当前 offset + delta，列表内容底部与输入栏顶部的相对位置全程不变
+        let inset = scrollView.adjustedContentInset
+        let finalBoundsHeight = scrollView.bounds.height - delta
+        let maxOffset = scrollView.contentSize.height + inset.bottom - finalBoundsHeight
+        let minOffset = -inset.top
+        guard maxOffset > minOffset else { return } // 内容不足一屏，无需跟随
+        let target = min(max(scrollView.contentOffset.y + delta, minOffset), maxOffset)
+
+        // beginFromCurrentState：动画中途被打断（收回一半又弹出）时从当前位置平滑接力
+        let options = UIView.AnimationOptions(rawValue: curve << 16).union(.beginFromCurrentState)
+        UIView.animate(withDuration: duration, delay: 0, options: options) {
+            // 动画 block 内必须用 animated: false，否则 UIScrollView 会跑自带的
+            // easeOut 动画，覆盖掉 block 的曲线参数
+            scrollView.setContentOffset(CGPoint(x: 0, y: target), animated: false)
         }
-        keyboardFollow?.stop()
-        keyboardFollow = nil
-        // 通知到达即贴一次（键盘动画第 0 帧），避免把首帧让给系统布局、慢一拍
-        scroll()
-        guard duration > 0.01 else {
-            // 无动画的键盘变化（例如切换输入法高度）：直接贴底即可
-            return
-        }
-        let follower = KeyboardBottomFollower(duration: duration + 0.05, onTick: scroll, onFinish: scroll)
-        follower.start()
-        keyboardFollow = follower
     }
 
     private func senderName(_ msg: ChatMessage) -> String {
@@ -567,51 +583,38 @@ private struct ScrollDismissesKeyboardCompat: ViewModifier {
     }
 }
 
-// MARK: - 键盘跟随器
+// MARK: - 列表滚动容器探针
 
-/// 在键盘动画期间按屏幕刷新帧回调，让消息列表逐帧贴底。
-/// 系统键盘避让是逐帧改变列表可视区高度的，只有跟随每一帧重新贴底，
-/// 列表才能与键盘/输入栏完全同步（既不提前，也不在动画结束后补跳）。
-/// 结束时通过 onFinish 再贴一次，消除 displayLink 丢帧导致的末帧残差。
-private final class KeyboardBottomFollower: NSObject {
-    private var link: CADisplayLink?
-    private var endTime: CFTimeInterval = 0
-    private let duration: Double
-    private let onTick: () -> Void
-    private let onFinish: (() -> Void)?
-    /// 防止 stop() 由外部主动停止时再触发 onFinish
-    private var finished = true
+/// 放在 ScrollView 内容里，沿 superview 链找到承载列表的底层 UIScrollView。
+/// 拿到后就能在键盘通知里用 UIKit 动画直接驱动 contentOffset（见 followKeyboard），
+/// 这是让列表与键盘同一条 CoreAnimation 曲线同步运动的前提。
+private struct ScrollViewProbe: UIViewRepresentable {
+    let onResolve: (UIScrollView) -> Void
 
-    init(duration: Double, onTick: @escaping () -> Void, onFinish: (() -> Void)? = nil) {
-        self.duration = duration
-        self.onTick = onTick
-        self.onFinish = onFinish
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        resolveLater(from: view)
+        return view
     }
 
-    func start() {
-        stop()
-        endTime = CACurrentMediaTime() + duration
-        finished = false
-        let link = CADisplayLink(target: self, selector: #selector(tick))
-        link.add(to: .main, forMode: .common)
-        self.link = link
+    func updateUIView(_ uiView: UIView, context: Context) {
+        resolveLater(from: uiView)
     }
 
-    func stop() {
-        link?.invalidate()
-        link = nil
-    }
-
-    @objc private func tick() {
-        guard CACurrentMediaTime() < endTime else {
-            stop()
-            if !finished {
-                finished = true
-                onFinish?()
+    /// makeUIView 时视图尚未挂入层级，延后一个 runloop 再向上找；
+    /// updateUIView 时再试一次，兜底首次解析失败的情况
+    private func resolveLater(from view: UIView) {
+        DispatchQueue.main.async {
+            var node = view.superview
+            while let current = node {
+                if let scroll = current as? UIScrollView {
+                    onResolve(scroll)
+                    return
+                }
+                node = current.superview
             }
-            return
         }
-        onTick()
     }
 }
 

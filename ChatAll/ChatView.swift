@@ -41,6 +41,15 @@ struct ChatView: View {
 
     var body: some View {
         ZStack {
+            // 底图容器：Color.clear + ignoresSafeArea 铺满整个窗口，bounds 恒定，
+            // 键盘升降不会改变它的位置/尺寸；图片以 topLeading 对齐、尺寸钉死为窗口大小。
+            // 之前用 .background 会在键盘弹出、ZStack 变矮时把固定尺寸的图片居中放置，
+            // 看起来就是背景整块上移。
+            Color.clear
+                .ignoresSafeArea()
+                .overlay(alignment: .topLeading) { chatBackgroundImage }
+                .allowsHitTesting(false)
+
             // 输入栏用 safeAreaInset 挂在消息列表底部：
             // 键盘升降完全交给系统驱动（与键盘同一动画），输入栏始终贴合键盘顶边，
             // 不再手动计算 padding，避免出现输入栏与键盘不同步、收起时页面回跳。
@@ -120,15 +129,12 @@ struct ChatView: View {
                     .transition(.opacity)
             }
         }
-        // 底图作为 background 挂上去：background 不参与主布局，键盘升降时
-        // 不会挤压消息区/输入栏；图片尺寸固定，也不随 safe area 重排。
-        .background(chatBackgroundImage)
     }
 
     /// 聊天页底图：与其它页面同一张图、同样的 scaledToFill 裁剪方式。
     /// 刻意不用 ChatBackgroundImageView（内部 GeometryReader 会随键盘 safe area
     /// 逐帧重算尺寸，导致图片重采样、看起来在闪）；这里尺寸钉死为窗口大小，
-    /// 键盘弹出/收回期间图片完全静止。
+    /// 容器也不随键盘变化，键盘弹出/收回期间图片完全静止。
     @ViewBuilder
     private var chatBackgroundImage: some View {
         if let image = loadChatBackground() {
@@ -138,8 +144,6 @@ struct ChatView: View {
                 .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
                 .clipped()
                 .id(store.backgroundVersion)
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
         }
     }
 

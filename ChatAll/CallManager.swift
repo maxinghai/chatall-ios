@@ -181,7 +181,7 @@ final class CallManager: NSObject, ObservableObject {
         layer.videoGravity = .resizeAspectFill
 
         let contentSource = AVPictureInPictureController
-            .ContentSource(sampleBufferDisplayLayer: layer, playbackDelegate: nil)
+            .ContentSource(sampleBufferDisplayLayer: layer, playbackDelegate: renderer)
         guard AVPictureInPictureController.isPictureInPictureSupported() else { return }
         let controller = AVPictureInPictureController(contentSource: contentSource)
         controller.delegate = self
@@ -859,5 +859,35 @@ final class PiPVideoRenderer: NSObject, RTCVideoRenderer {
             }
         }
         return pb
+    }
+}
+
+// MARK: - PiP 播放代理
+
+/// 实时通话画面没有播放/暂停/进度概念：时间范围声明为无限、始终保持播放，
+/// 系统就不会在画中画窗口里显示进度条和暂停控件。
+extension PiPVideoRenderer: AVPictureInPictureSampleBufferPlaybackDelegate {
+
+    func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
+                                    setPlaying playing: Bool) {
+        // 直播流：忽略播放/暂停请求
+    }
+
+    func pictureInPictureControllerTimeRangeForPlayback(_ pictureInPictureController: AVPictureInPictureController) -> CMTimeRange {
+        CMTimeRange(start: .zero, duration: .positiveInfinity)
+    }
+
+    func pictureInPictureControllerIsPlaybackPaused(_ pictureInPictureController: AVPictureInPictureController) -> Bool {
+        false
+    }
+
+    func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
+                                    didTransitionToRenderSize newRenderSize: CMVideoDimensions) {
+    }
+
+    func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
+                                    skipByInterval skipInterval: CMTime,
+                                    completion completionHandler: @escaping () -> Void) {
+        completionHandler()
     }
 }

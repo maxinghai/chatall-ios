@@ -223,6 +223,7 @@ struct ChatView: View {
                 .padding(.horizontal, 12)
             }
             .modifier(ScrollDismissesKeyboardCompat())
+            .modifier(TopScrollEdgeEffectHiddenCompat())
             .contentShape(Rectangle())
             .onTapGesture { inputFocused = false }
             .onChange(of: messages.count) { _ in
@@ -609,6 +610,20 @@ private struct ScrollDismissesKeyboardCompat: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 16.0, *) {
             content.scrollDismissesKeyboard(.immediately)
+        } else {
+            content
+        }
+    }
+}
+
+/// iOS 26 起，内容滚到导航栏下方时系统会自动在顶部叠一层磨砂「滚动边缘效果」，
+/// 在浅色底图上看起来就是一条发白的不透明横条，把聊天页顶部的导航栏/状态栏区域盖住。
+/// 聊天页导航栏底色已隐藏（toolbarBackground(.hidden)），这里把该边缘效果一并关掉，
+/// 顶部才能真正透出底图。
+private struct TopScrollEdgeEffectHiddenCompat: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.scrollEdgeEffectHidden(true, for: .top)
         } else {
             content
         }

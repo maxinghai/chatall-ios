@@ -43,6 +43,8 @@ struct ImagePreviewView: View {
 
     // 手势轴
     @State private var dragAxis: DragAxis?
+    /// 判定出手势方向时的已有位移：之后的位移都相对它计算，避免起手瞬间图片跳一下
+    @State private var dragAnchor: CGSize?
     @State private var pageDrag: CGFloat = 0
     /// 拖拽关闭时的 2D 位移（任意方向）
     @State private var dismissOffset: CGSize = .zero
@@ -92,8 +94,9 @@ struct ImagePreviewView: View {
                     .gesture(dragGesture(in: geo.size))
                     .simultaneousGesture(magnifyGesture(in: geo.size))
                     .simultaneousGesture(tapGesture(in: geo.size))
+                    // 先缩放、后位移：位移保持与手指 1:1（不会因为 dismissScale 变小而“跟手变慢”）
+                    .scaleEffect(dismissScale, anchor: .center)
                     .offset(x: dismissOffset.width, y: dismissOffset.height)
-                    .scaleEffect(dismissScale)
                     .opacity(pagerOpacity)
                     .allowsHitTesting(heroPhase == .showing && !isDismissing)
                     .onChange(of: geo.size) { viewSize = $0 }
@@ -214,19 +217,24 @@ struct ImagePreviewView: View {
         heroPhase = .closing
         let fadeOut = Animation.timingCurve(0.4, 0.0, 0.2, 1.0, duration: exitDuration)
 
-        // pager 与 hero 交叉淡化，避免关闭瞬间整屏画面先消失
-        withAnimation(.easeOut(duration: exitDuration * 0.6)) {
-            pagerOpacity = 0
-        }
-
         // 源图不可见、无 source 或缓存缺失：直接淡出，避免飞回屏幕外
-        guard let source = sourceFrame, isSourceVisible(source),
+        // 已翻页到别的图片时也不再缩回：sourceFrame 是“刚点开那张图”的气泡位置，
+        // 把当前图片缩回到那张图的缩略图上会张冠李戴，这里改为原地淡出（与微信一致）
+        guard index == currentIndex, let source = sourceFrame, isSourceVisible(source),
               let img = cachedImage(for: urls[index]) else {
+            // 清掉展开阶段残留的 hero 图，避免淡出时盖出另一张图
+            heroImage = nil
             withAnimation(fadeOut) {
                 bgOpacity = 0
+                pagerOpacity = 0
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + exitDuration) { onDismiss() }
             return
+        }
+
+        // pager 与 hero 交叉淡化，避免关闭瞬间整屏画面先消失
+        withAnimation(.easeOut(duration: exitDuration * 0.6)) {
+            pagerOpacity = 0
         }
 
         heroImage = img
@@ -236,13 +244,13 @@ struct ImagePreviewView: View {
         heroFill = true
 
         // 从“当前真实渲染位置”起飞：
-        // pager 的 dismissOffset/offset 会被 dismissScale 统一缩放，这里必须同比例计算，
-        // 否则拖拽关闭（已带位移/缩放）时 hero 起手会跳一下。
+        // 变换顺序已改为 scale 后再 offset，所以缩放部分要乘 dismissScale，
+        // 拖拽位移保持 1:1，不能再乘，否则拖拽中途收起时 hero 起手会跳一下。
         let fit = fitFrame(for: img.size, in: screenRect)
         let combinedScale = dismissScale * scale
         let startCenter = CGPoint(
-            x: fit.midX + (offset.width + dismissOffset.width) * dismissScale,
-            y: fit.midY + (offset.height + dismissOffset.height) * dismissScale
+            x: fit.midX + offset.width * dismissScale + dismissOffset.width,
+            y: fit.midY + offset.height * dismissScale + dismissOffset.height
         )
         heroFrame = CGRect(
             x: startCenter.x - fit.width * combinedScale / 2,
@@ -370,7 +378,9 @@ struct ImagePreviewView: View {
     // MARK: - 拖动：翻页 / 拖拽关闭 / 放大后平移
 
     private func dragGesture(in size: CGSize) -> some Gesture {
-        DragGesture(minimumDistance: 8)
+        // 用全局坐标空间：视图自身带 scale 变换时，local 空间的 translation 会被
+        // 反算成 translation/scale，缩放越小位移越大，形成正反馈 —— 这正是下滑时图片抖动的根源。
+        DragGesture(minimumDistance: 8, coordinateSpace: .global)
             .onChanged { value in
                 guard !isDismissing, !isPinching, heroPhase == .showing else { return }
 
@@ -378,10 +388,12 @@ struct ImagePreviewView: View {
                 if scale > 1.001 {
                     if dragAxis != .pan {
                         dragAxis = .pan
+                        dragAnchor = value.translation
                         panStartOffset = offset
                     }
-                    let proposed = CGSize(width: panStartOffset.width + value.translation.width,
-                                          height: panStartOffset.height + value.translation.height)
+                    let delta = dragDelta(value.translation)
+                    let proposed = CGSize(width: panStartOffset.width + delta.width,
+                                          height: panStartOffset.height + delta.height)
                     offset = clampOffset(proposed, scale: scale, in: size)
                     return
                 }
@@ -392,16 +404,20 @@ struct ImagePreviewView: View {
                     let dy = value.translation.height
                     guard max(abs(dx), abs(dy)) > 8 else { return }
                     dragAxis = abs(dx) >= abs(dy) ? .horizontal : .dismiss
+                    // 以判定方向的这一帧为起点，起手不再跳一下
+                    dragAnchor = value.translation
                 }
+
+                let delta = dragDelta(value.translation)
 
                 switch dragAxis {
                 case .horizontal:
-                    pageDrag = pageDragValue(for: value.translation.width, in: size)
+                    pageDrag = pageDragValue(for: delta.width, in: size)
                     dismissOffset = .zero
                 case .dismiss:
                     // 任意方向拖拽：图片跟随手指 1:1，背景做带缓动的淡出
-                    dismissOffset = value.translation
-                    let dist = hypot(dismissOffset.width, dismissOffset.height)
+                    dismissOffset = delta
+                    let dist = hypot(delta.width, delta.height)
                     let progress = min(1, Double(dist / 420))
                     bgOpacity = pow(1 - progress, 1.3)
                 default:
@@ -409,7 +425,10 @@ struct ImagePreviewView: View {
                 }
             }
             .onEnded { value in
-                defer { dragAxis = nil }
+                defer {
+                    dragAxis = nil
+                    dragAnchor = nil
+                }
                 guard !isDismissing else { return }
 
                 if dragAxis == .pan || scale > 1.001 {
@@ -419,15 +438,26 @@ struct ImagePreviewView: View {
                     return
                 }
 
+                let delta = dragDelta(value.translation)
+                let predicted = dragDelta(value.predictedEndTranslation)
+
                 switch dragAxis {
                 case .horizontal:
-                    finishPageDrag(value, in: size)
+                    finishPageDrag(dx: delta.width, predicted: predicted.width, in: size)
                 case .dismiss:
-                    finishDismissDrag(value)
+                    finishDismissDrag(dist: hypot(delta.width, delta.height),
+                                      predictedDist: hypot(predicted.width, predicted.height))
                 default:
                     break
                 }
             }
+    }
+
+    /// 扣除起手判定前的位移，得到真正用于驱动动画的增量
+    private func dragDelta(_ translation: CGSize) -> CGSize {
+        guard let anchor = dragAnchor else { return translation }
+        return CGSize(width: translation.width - anchor.width,
+                      height: translation.height - anchor.height)
     }
 
     private func pageDragValue(for dx: CGFloat, in size: CGSize) -> CGFloat {
@@ -444,10 +474,8 @@ struct ImagePreviewView: View {
         return max(-size.width * 0.85, min(size.width * 0.85, dx))
     }
 
-    private func finishPageDrag(_ value: DragGesture.Value, in size: CGSize) {
+    private func finishPageDrag(dx: CGFloat, predicted: CGFloat, in size: CGSize) {
         guard size.width > 0 else { return }
-        let dx = value.translation.width
-        let predicted = value.predictedEndTranslation.width
         var target = index
 
         if abs(predicted) > size.width * 0.35 || abs(dx) > size.width * 0.18 {
@@ -464,10 +492,7 @@ struct ImagePreviewView: View {
         }
     }
 
-    private func finishDismissDrag(_ value: DragGesture.Value) {
-        let dist = hypot(value.translation.width, value.translation.height)
-        let predictedDist = hypot(value.predictedEndTranslation.width,
-                                  value.predictedEndTranslation.height)
+    private func finishDismissDrag(dist: CGFloat, predictedDist: CGFloat) {
         if dist > 120 || predictedDist > 300 {
             triggerDismiss()
         } else {
@@ -487,6 +512,7 @@ struct ImagePreviewView: View {
                 if !isPinching {
                     isPinching = true
                     dragAxis = nil
+                    dragAnchor = nil
                     pageDrag = 0
                     dismissOffset = .zero
                     pinchStartScale = scale
@@ -589,6 +615,7 @@ struct ImagePreviewView: View {
         offset = .zero
         isPinching = false
         dragAxis = nil
+        dragAnchor = nil
         pageDrag = 0
         dismissOffset = .zero
     }

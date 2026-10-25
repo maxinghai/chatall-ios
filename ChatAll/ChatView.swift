@@ -788,10 +788,10 @@ struct MessageRow: View {
         } label: { Label("删除", systemImage: "trash") }
     }
 
-    /// 自己发的 ACK 消息下方显示"已读 / 未读"（仅单聊，群聊无意义）
+    /// 自己发的 ACK 消息下方显示"已读 / 未读"（仅单聊，群聊与通话记录无意义）
     @ViewBuilder
     private var readStatus: some View {
-        if isSelf && message.localState == 1 && !showSender {
+        if isSelf && message.localState == 1 && !showSender && message.callRecord == nil {
             Text(message.readByPeer ? "已读" : "未读")
                 .font(.system(size: 10))
                 .foregroundColor(.gray)
@@ -811,7 +811,7 @@ struct MessageRow: View {
 
     @ViewBuilder
     private var bubble: some View {
-        if let call = callRecord {
+        if let call = message.callRecord {
             callRecordBubble(call.isVideo, call.seconds)
         } else {
             switch message.contentType {
@@ -827,25 +827,12 @@ struct MessageRow: View {
         }
     }
 
-    /// 通话记录（普通文本消息，内容形如 [[call:voice:83]]）
-    private var callRecord: (isVideo: Bool, seconds: Int)? {
-        guard message.contentType == "TEXT" else { return nil }
-        let text = (message.content ?? "").trimmingCharacters(in: .whitespaces)
-        guard text.hasPrefix("[[call:"), text.hasSuffix("]]") else { return nil }
-        let body = text.dropFirst("[[call:".count).dropLast(2)
-        let parts = body.split(separator: ":")
-        guard parts.count == 2,
-              parts[0] == "voice" || parts[0] == "video",
-              let seconds = Int(parts[1]) else { return nil }
-        return (parts[0] == "video", seconds)
-    }
-
     /// 通话记录气泡：图标 + 语音/视频通话 + 时长
     private func callRecordBubble(_ video: Bool, _ seconds: Int) -> some View {
         HStack(spacing: 6) {
             Image(systemName: video ? "video.fill" : "phone.fill")
                 .font(.system(size: 14))
-            Text((video ? "视频通话 " : "语音通话 ") + Self.durationText(seconds))
+            Text((video ? "视频通话 " : "语音通话 ") + ChatMessage.callDurationText(seconds))
                 .font(.system(size: 15))
         }
         .foregroundColor(isSelf ? .white : .primary)
@@ -853,16 +840,6 @@ struct MessageRow: View {
         .padding(.vertical, 9)
         .background(isSelf ? Color.chatGreen : Color.bubbleGray)
         .cornerRadius(14)
-    }
-
-    private static func durationText(_ seconds: Int) -> String {
-        let h = seconds / 3600
-        let m = (seconds % 3600) / 60
-        let s = seconds % 60
-        if h > 0 {
-            return String(format: "%d:%02d:%02d", h, m, s)
-        }
-        return String(format: "%02d:%02d", m, s)
     }
 
     private var textBubble: some View {

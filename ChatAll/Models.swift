@@ -288,6 +288,30 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         if chatType == 2 { return groupId ?? 0 }
         return toId ?? 0
     }
+
+    /// 通话记录：普通文本消息，内容形如 [[call:voice:83]] / [[call:video:83]]
+    var callRecord: (isVideo: Bool, seconds: Int)? {
+        guard contentType == "TEXT" else { return nil }
+        let text = (content ?? "").trimmingCharacters(in: .whitespaces)
+        guard text.hasPrefix("[[call:"), text.hasSuffix("]]") else { return nil }
+        let body = text.dropFirst("[[call:".count).dropLast(2)
+        let parts = body.split(separator: ":")
+        guard parts.count == 2,
+              parts[0] == "voice" || parts[0] == "video",
+              let seconds = Int(parts[1]) else { return nil }
+        return (parts[0] == "video", seconds)
+    }
+
+    /// 通话时长格式（秒 → m:ss，超过 1 小时为 h:mm:ss）
+    static func callDurationText(_ seconds: Int) -> String {
+        let h = seconds / 3600
+        let m = (seconds % 3600) / 60
+        let s = seconds % 60
+        if h > 0 {
+            return String(format: "%d:%02d:%02d", h, m, s)
+        }
+        return String(format: "%02d:%02d", m, s)
+    }
 }
 
 /// 单聊未读统计（服务端返回 [{peerId, count}]）

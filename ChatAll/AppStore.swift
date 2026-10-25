@@ -526,6 +526,11 @@ final class AppStore: ObservableObject {
             // 对方撤回的消息：列表预览不显示，避免干扰
             return ""
         }
+        // 通话记录按类型 + 时长翻译，避免列表里出现 [[call:voice:83]] 原始内容
+        if let call = msg.callRecord {
+            return (call.isVideo ? "[视频通话] " : "[语音通话] ")
+                + ChatMessage.callDurationText(call.seconds)
+        }
         switch msg.contentType {
         case "IMAGE": return "[图片]"
         case "FILE": return "[文件]"
